@@ -1,22 +1,22 @@
-# Paint-battle bot (v2)
+# Paint-battle bot (v3)
 
 A rewritten bot for the *paint battle* game (the one that reads `GAME R C U V T known`
 and answers `ORDERS N E S W H`), plus a complete local simulator so the bot can be
 measured instead of guessed.
 
+## The scoring formula (read this first)
+
 ```
-bot/
-├─ src/solution.cpp   <-- the bot. Single file, paste this into the judge.
-├─ src/old_bot.cpp    <-- your previous submission, kept as a reference opponent
-└─ sim/
-   ├─ engine.py       <-- exact protocol + movement/paint rules + statistics
-   ├─ bots.py         <-- subprocess adapter + reference opponents (random/greedy/squatter)
-   ├─ bench.py        <-- one bot vs one opponent
-   ├─ h2h.py          <-- two compiled bots head to head
-   ├─ suite.py        <-- 8 scenarios x N opponents, balanced score
-   ├─ report.py       <-- old bot vs new bot comparison table
-   └─ trace.py        <-- print a full game, round by round
+Example 2:  You 8, opponent 10  ->  5 * 8 / 10  = 4.00 points   (shown: 4.00)
+Example 1:  You 3, opponent  3  ->  5 * 3 /  3  = 5.00 points   (shown: 5.00)
+"Examples score: 45" == mean(4.00, 5.00) * 10
 ```
+
+So a game is **`5 * ours / theirs`, capped at 10** — a ratio, not a margin.
+Being 10 vs 10 is only 5.0/10; full marks need **2:1 domination**. That is why
+a bot that "wins on cells" can still score ~48. Every value below is expressed
+in those terms: taking one of their cells is worth `1 + A/B` of ours, because it
+also shrinks their pile.
 
 ## Build
 

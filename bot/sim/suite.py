@@ -8,7 +8,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from engine import make_game  # noqa: E402
+from engine import make_game, score_points  # noqa: E402
 from bots import SubprocessBot, RandomBot, GreedyBot, SquatterBot  # noqa: E402
 
 CONFIGS = [
@@ -50,12 +50,13 @@ def one_game(bot_path, opp, cfg, seed, swap):
 
 
 def evaluate(bot_path, seeds=4, configs=CONFIGS, opponents=None, quiet=False):
+    """Score = mean judge points (0-100) over every game played."""
     opponents = opponents or (['old'] + list(PY_OPPONENTS))
-    cfg_avgs = []
-    allm = []
+    cfg_pts = []
+    all_pts = []
     t0 = time.time()
     for cfg in configs:
-        cfg_margins = []
+        cfg_p = []
         for oppname in opponents:
             if oppname == 'old':
                 opp = OLD_BOT
@@ -63,30 +64,30 @@ def evaluate(bot_path, seeds=4, configs=CONFIGS, opponents=None, quiet=False):
                     continue
             else:
                 opp = PY_OPPONENTS[oppname]
-            margins = []
+            pts = []
             st = dict(new=0, own=0, blocked=0, flip=0, steps=0,
                       block_enemy=0, block_own=0, block_swap=0)
             for seed in range(seeds):
                 for swap in (0, 1):
                     a, b, stats = one_game(bot_path, opp, cfg, seed, swap)
-                    margins.append(a - b)
+                    pts.append(score_points(a, b))
                     for k in st:
                         st[k] += stats[0].get(k, 0)
-            avg = sum(margins) / len(margins)
-            cfg_margins.extend(margins)
-            allm.extend(margins)
+            sc = 10.0 * sum(pts) / len(pts)
+            cfg_p.extend(pts)
+            all_pts.extend(pts)
             if not quiet:
-                print('  %-7s vs %-9s  avg %+6.2f  [%+3d..%+3d]  blocked %d/%d own %d'
-                      % (cfg['name'], oppname, avg, min(margins), max(margins),
+                print('  %-7s vs %-9s  score %5.2f/10   [%4.2f..%4.2f]  blocked %d/%d own %d'
+                      % (cfg['name'], oppname, sc, min(pts), max(pts),
                          st['blocked'], st['steps'], st['own']))
-        cfg_avgs.append(sum(cfg_margins) / len(cfg_margins))
-    bal = sum(cfg_avgs) / len(cfg_avgs)
-    small = [a for c, a in zip(configs, cfg_avgs) if c['name'] in SMALL]
+        cfg_pts.append(10.0 * sum(cfg_p) / len(cfg_p))
+    bal = sum(cfg_pts) / len(cfg_pts)
+    small = [a for c, a in zip(configs, cfg_pts) if c['name'] in SMALL]
     smallsc = (sum(small) / len(small)) if small else float('nan')
-    print('  per-config: ' + '  '.join('%s %+0.2f' % (c['name'], a)
-                                       for c, a in zip(configs, cfg_avgs)))
-    print('SMALL %+0.2f  BALANCED %+0.2f   ALL %+0.2f   (%d games, %.1fs)'
-          % (smallsc, bal, sum(allm) / len(allm), len(allm), time.time() - t0))
+    print('  per-config: ' + '  '.join('%s %5.1f' % (c['name'], a)
+                                       for c, a in zip(configs, cfg_pts)))
+    print('SCORE small %5.1f   all %5.1f   (%d games, %.1fs)'
+          % (smallsc, bal, len(all_pts), time.time() - t0))
     return bal
 
 

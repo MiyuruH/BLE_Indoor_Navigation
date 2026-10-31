@@ -334,9 +334,15 @@ def make_game(seed, R=8, C=8, U=2, V=1, T=30, known=1, wall_prob=0.22, corridor=
     return Game(R, C, U, V, T, known, grid, sa, sb)
 
 
-def score_points(ours, theirs, R, C, T):
-    """Two plausible point formulas; used only for reporting."""
-    total = R * C
-    p1 = (ours / max(1, total)) * 100 * (2.0 if total < 30 else 1.0)
-    p2 = 5.0 + 5.0 * (ours / max(1, ours + theirs))
-    return round(p1, 2), round(p2, 2)
+def score_points(ours, theirs):
+    """Judge formula, reverse engineered from the sample results:
+
+        Example 2:  8 vs 10  ->  5 * 8 / 10 = 4.00   (shown: 4.00)
+        Example 1:  3 vs  3  ->  5 * 3 /  3 = 5.00   (shown: 5.00)
+        "Examples score: 45" == mean(4.00, 5.00) * 10
+
+    So a game is worth 5*A/B out of 10, and a perfect game needs A >= 2*B.
+    """
+    if theirs <= 0:
+        return 10.0
+    return min(10.0, 5.0 * ours / theirs)
