@@ -1,0 +1,4 @@
+sim/new_bot
+sim/old_bot
+__pycache__/
+*.pyc
