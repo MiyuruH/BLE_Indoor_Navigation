@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover">
+  <meta name="theme-color" content="#060d1a">
+  <title>BLE Indoor Navigation - 3rd Floor Plan</title>
+
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
+  <style>
+    :root {
+      --bg-dark: #060d1a;
+      --panel-bg: rgba(11, 22, 41, 0.92);
+      --accent-blue: #38bdf8;
+      --accent-green: #34d399;
+      --accent-red: #fb7185;
+      --text-main: #f8fafc;
+      --text-sub: #94a3b8;
+      --border-color: rgba(148, 163, 184, 0.2);
+      --safe-top: env(safe-area-inset-top, 0px);
+      --safe-bottom: env(safe-area-inset-bottom, 0px);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      height: 100dvh;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background-color: var(--bg-dark);
+      color: var(--text-main);
+      overflow: hidden;
+      overscroll-behavior: none;
+    }
+
+    #app {
+      position: relative;
+      width: 100vw;
+      height: 100dvh;
+      overflow: hidden;
+    }
+
+    #map {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      background-color: var(--bg-dark);
+      z-index: 1;
+    }
+
+    /* Floating Top HUD */
+    .top-hud {
+      position: absolute;
+      top: calc(10px + var(--safe-top));
+      left: 12px;
+      right: 12px;
+      z-index: 1000;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      pointer-events: none;
+    }
+
+    .hud-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      background: var(--panel-bg);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      padding: 10px 14px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+      pointer-events: auto;
+    }
+
+    .hud-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.96rem;
+      font-weight: 800;
+    }
+
+    .hud-badge {
+      font-size: 0.72rem;
+      padding: 5px 10px;
+      border-radius: 999px;
+      background: rgba(56, 189, 248, 0.16);
+      border: 1px solid rgba(56, 189, 248, 0.35);
+      color: var(--accent-blue);
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .route-banner {
+      display: none;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      background: linear-gradient(135deg, rgba(15, 23, 42, 0.96), rgba(7, 89, 133, 0.92));
+      border: 1px solid rgba(56, 189, 248, 0.45);
+      border-radius: 16px;
+      padding: 10px 14px;
+      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+      pointer-events: auto;
+    }
+
+    .route-banner.active {
+      display: flex;
+    }
+
+    .banner-metrics {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      font-size: 0.82rem;
+    }
+
+    .banner-metrics strong {
+      color: var(--accent-green);
+      font-size: 0.92rem;
+    }
+
+    .btn-clear-sm {
+      padding: 7px 12px;
+      background: rgba(251, 113, 133, 0.2);
+      border: 1px solid var(--accent-red);
+      color: #fecdd3;
+      border-radius: 10px;
+      font-size: 0.78rem;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    /* Bottom Sheet (Phone/Tablet) & Floating Dock (Desktop) */
+    #sidebar {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: var(--panel-bg);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border-top: 1px solid var(--border-color);
+      border-radius: 20px 20px 0 0;
+      display: flex;
+      flex-direction: column;
+      padding: 8px 12px calc(12px + var(--safe-bottom)) 12px;
+      gap: 8px;
+      z-index: 1000;
+      box-shadow: 0 -10px 32px rgba(0, 0, 0, 0.5);
+      max-height: 46dvh;
+      transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+
+    #sidebar.hidden-sheet {
+      transform: translateY(calc(100% - 48px - var(--safe-bottom)));
+    }
+
+    .sheet-grab {
+      width: 38px;
+      height: 4px;
+      background: rgba(148, 163, 184, 0.45);
+      border-radius: 999px;
+      margin: 0 auto;
+      cursor: pointer;
+    }
+
+    .sheet-top-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 0.8rem;
+      color: var(--text-sub);
+    }
+
+    .sheet-top-row strong {
+      color: var(--text-main);
+    }
+
+    .search-box input {
+      width: 100%;
+      padding: 9px 13px;
+      background: rgba(15, 23, 42, 0.9);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      color: var(--text-main);
+      font-size: 0.86rem;
+      outline: none;
+    }
+
+    .search-box input:focus {
+      border-color: var(--accent-blue);
+    }
+
+    .room-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      overflow-y: auto;
+    }
+
+    .room-card {
+      background: rgba(30, 41, 59, 0.75);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 10px 8px;
+      font-size: 0.82rem;
+      font-weight: 700;
+      cursor: pointer;
+      text-align: center;
+      transition: all 0.16s ease;
+      color: var(--text-main);
+    }
+
+    .room-card:active {
+      transform: scale(0.95);
+    }
+
+    .room-card.active {
+      background: rgba(52, 211, 153, 0.22);
+      border-color: var(--accent-green);
+      color: var(--accent-green);
+    }
+
+    @media (min-width: 900px) {
+      .top-hud {
+        left: 368px;
+        top: 16px;
+      }
+
+      #sidebar, #sidebar.hidden-sheet {
+        top: 16px;
+        left: 16px;
+        right: auto;
+        bottom: 16px;
+        width: 336px;
+        max-height: calc(100dvh - 32px);
+        border-radius: 22px;
+        border: 1px solid var(--border-color);
+        padding: 16px;
+        transform: none;
+      }
+
+      .sheet-grab {
+        display: none;
+      }
+
+      .room-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    .leaflet-popup-content-wrapper {
+      background: #1e293b !important;
+      color: #f8fafc !important;
+      border: 1px solid #334155;
+      border-radius: 10px;
+      font-size: 0.82rem;
+    }
+
+    .leaflet-popup-tip { background: #1e293b !important; }
+
+    .person-dot {
+      width: 16px;
+      height: 16px;
+      background-color: var(--accent-blue);
+      border: 2.5px solid #ffffff;
+      border-radius: 50%;
+      box-shadow: 0 0 12px var(--accent-blue);
+      position: relative;
+    }
+
+    .person-dot::after {
+      content: '';
+      position: absolute;
+      top: -8px;
+      left: -8px;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background-color: rgba(56, 189, 248, 0.35);
+      animation: pulse 1.6s infinite ease-out;
+    }
+
+    @keyframes pulse {
+      0% { transform: scale(0.5); opacity: 1; }
+      100% { transform: scale(2.2); opacity: 0; }
+    }
+
+    .dest-pin {
+      width: 20px;
+      height: 20px;
+      background: var(--accent-red);
+      border: 2.5px solid #ffffff;
+      border-radius: 50% 50% 0 50%;
+      transform: rotate(-45deg);
+      box-shadow: 0 0 10px rgba(248, 113, 113, 0.8);
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div class="top-hud">
+      <div class="hud-bar">
+        <div class="hud-title">📍 3rd Floor Indoor Nav</div>
+        <button class="hud-badge" onclick="fitFullMap()">⟲ Fit Map</button>
+      </div>
+
+      <div class="route-banner" id="routeCard">
+        <div class="banner-metrics">
+          <span><span id="startName">Main Entrance</span> → <strong id="destName">-</strong></span>
+          <span id="routeTime">~0 sec walk</span>
+        </div>
+        <button class="btn-clear-sm" onclick="clearNavigation()">Clear</button>
+      </div>
+    </div>
+
+    <div id="map"></div>
+
+    <div id="sidebar">
+      <div class="sheet-grab" onclick="toggleSheet()"></div>
+      <div class="sheet-top-row" onclick="toggleSheet()">
+        <span>You are at: <strong id="currentSpotLabel">Main Entrance</strong></span>
+        <span style="color:var(--accent-blue); cursor:pointer;">Tap hallway to move</span>
+      </div>
+
+      <div class="search-box">
+        <input type="search" id="roomSearch" placeholder="Search room (e.g. No. 300)..." oninput="filterRooms()">
+      </div>
+
+      <div class="room-grid" id="roomGrid"></div>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    const imgWidth = 1102;
+    const imgHeight = 1672;
+    const bounds = [[imgHeight, 0], [0, imgWidth]];
+
+    const map = L.map('map', {
+      crs: L.CRS.Simple,
+      zoomControl: false,
+      minZoom: -1.6,
+      maxZoom: 2,
+      maxBounds: [[imgHeight + 300, -300], [-300, imgWidth + 300]],
+      maxBoundsViscosity: 0.9
+    });
+
+    function fitFullMap() {
+      const isMobile = window.innerWidth < 900;
+      map.fitBounds(bounds, {
+        paddingTopLeft: isMobile ? [16, 70] : [360, 40],
+        paddingBottomRight: isMobile ? [16, 220] : [40, 40]
+      });
+    }
+
+    fitFullMap();
+    window.addEventListener('resize', fitFullMap);
+
+    const nodes = {
+      "START":      [55, 137],
+      "N_ROOM6":    [1350.5, 137],
+      "D_ROOM6":    [1350.5, 445],
+      "MAIN_CROSS": [795, 137],
+      "N_ROOM2_4":  [795, 585],
+      "D_ROOM2":    [555, 585],
+      "D_ROOM4":    [1049, 585],
+      "N_ROOM3_5":  [795, 765],
+      "D_ROOM3":    [555, 765],
+      "D_ROOM5":    [1049, 765],
+      "N_ROOM1":    [236, 137],
+      "D_ROOM1":    [236, 445]
+    };
+
+    const NODE_LABELS = {
+      "START": "Main Entrance",
+      "N_ROOM6": "Hallway near No. 305",
+      "D_ROOM6": "No. 305",
+      "MAIN_CROSS": "Central Junction",
+      "N_ROOM2_4": "Mid-West Junction",
+      "D_ROOM2": "No. 301",
+      "D_ROOM4": "No. 303",
+      "N_ROOM3_5": "Mid-East Junction",
+      "D_ROOM3": "No. 302",
+      "D_ROOM5": "No. 304",
+      "N_ROOM1": "Hallway near No. 300",
+      "D_ROOM1": "No. 300"
+    };
+
+    const graph = {
+      "START":      ["N_ROOM1"],
+      "N_ROOM1":    ["START", "MAIN_CROSS", "D_ROOM1"],
+      "D_ROOM1":    ["N_ROOM1"],
+      "MAIN_CROSS": ["N_ROOM1", "N_ROOM6", "N_ROOM2_4"],
+      "N_ROOM6":    ["D_ROOM6", "MAIN_CROSS"],
+      "D_ROOM6":    ["N_ROOM6"],
+      "N_ROOM2_4":  ["MAIN_CROSS", "N_ROOM3_5", "D_ROOM2", "D_ROOM4"],
+      "D_ROOM2":    ["N_ROOM2_4"],
+      "D_ROOM4":    ["N_ROOM2_4"],
+      "N_ROOM3_5":  ["N_ROOM2_4", "D_ROOM3", "D_ROOM5"],
+      "D_ROOM3":    ["N_ROOM3_5"],
+      "D_ROOM5":    ["N_ROOM3_5"]
+    };
+
+    const rooms = [
+      { id: "r1", name: "No. 300", targetNode: "D_ROOM1", polygon: [[15, 284.5], [15, 1094.5], [356.5, 1094.5], [356.5, 284.5]] },
+      { id: "r2", name: "No. 301", targetNode: "D_ROOM2", polygon: [[357.5, 284.5], [357.5, 686.5], [676.5, 686.5], [676.5, 284.5]] },
+      { id: "r3", name: "No. 302", targetNode: "D_ROOM3", polygon: [[356.5, 685.5], [356.5, 1094.5], [676.5, 1094.5], [676.5, 685.5]] },
+      { id: "r4", name: "No. 303", targetNode: "D_ROOM4", polygon: [[921.5, 284.5], [921.5, 681.5], [1241.5, 681.5], [1241.5, 284.5]] },
+      { id: "r5", name: "No. 304", targetNode: "D_ROOM5", polygon: [[921.5, 681.5], [921.5, 1094.5], [1241.5, 1094.5], [1241.5, 681.5]] },
+      { id: "r6", name: "No. 305", targetNode: "D_ROOM6", polygon: [[1234.5, 284.5], [1234.5, 1094.5], [1664.5, 1094.5], [1664.5, 284.5]] }
+    ];
+
+    const buildingShell = [[7.5, 7.5], [7.5, 1094.5], [1664.5, 1094.5], [1664.5, 7.5]];
+    const corridorPolygon = [
+      [7.5, 7.5], [7.5, 284.5], [676.5, 284.5], [676.5, 1094.5],
+      [921.5, 1094.5], [921.5, 284.5], [1664.5, 284.5], [1664.5, 7.5]
+    ];
+    const wallStub = [[665, 1094.5], [794, 1094.5]];
+
+    L.polygon(buildingShell, {
+      color: '#0f172a', weight: 4, fillColor: '#f8fafc', fillOpacity: 1, interactive: false
+    }).addTo(map);
+
+    L.polygon(corridorPolygon, {
+      color: '#64748b', weight: 1, dashArray: '6 6', opacity: 0.6,
+      fillColor: '#f1f5f9', fillOpacity: 1, interactive: false
+    }).addTo(map);
+
+    rooms.forEach(room => {
+      const poly = L.polygon(room.polygon, {
+        color: '#0f172a', weight: 3.5, fillColor: '#cbd5e1', fillOpacity: 1
+      }).addTo(map);
+
+      poly.on('click', function (e) {
+        L.DomEvent.stopPropagation(e);
+        navigateToRoom(room);
+      });
+    });
+
+    L.polyline(wallStub, { color: '#0f172a', weight: 4, interactive: false }).addTo(map);
+
+    const personIcon = L.divIcon({
+      className: 'custom-person-marker',
+      html: '<div class="person-dot"></div>',
+      iconSize: [16, 16],
+      iconAnchor: [8, 8]
+    });
+
+    let currentLocationNode = "START";
+    let selectedRoom = null;
+
+    const personMarker = L.marker(nodes[currentLocationNode], {
+      icon: personIcon,
+      draggable: true
+    }).addTo(map);
+
+    let destinationMarker = null;
+    let routeLine = null;
+
+    function nearestNode(latlng) {
+      let bestKey = currentLocationNode;
+      let bestDist = Infinity;
+      for (const key in nodes) {
+        const [ny, nx] = nodes[key];
+        const d = Math.hypot(latlng.lat - ny, latlng.lng - nx);
+        if (d < bestDist) { bestDist = d; bestKey = key; }
+      }
+      return bestKey;
+    }
+
+    function setCurrentLocation(latlng) {
+      currentLocationNode = nearestNode(latlng);
+      personMarker.setLatLng(nodes[currentLocationNode]);
+      const label = NODE_LABELS[currentLocationNode] || currentLocationNode;
+      document.getElementById('currentSpotLabel').innerText = label;
+      if (selectedRoom) navigateToRoom(selectedRoom);
+    }
+
+    map.on('mousedown touchstart', () => {
+      if (window.innerWidth < 900) {
+        document.getElementById('sidebar').classList.add('hidden-sheet');
+      }
+    });
+    map.on('click', (e) => setCurrentLocation(e.latlng));
+    personMarker.on('dragend', () => setCurrentLocation(personMarker.getLatLng()));
+
+    function getShortestPath(startNode, endNode) {
+      let queue = [[startNode]];
+      let visited = new Set([startNode]);
+
+      while (queue.length > 0) {
+        let path = queue.shift();
+        let curr = path[path.length - 1];
+        if (curr === endNode) return path.map(n => nodes[n]);
+        for (let neighbor of (graph[curr] || [])) {
+          if (!visited.has(neighbor)) {
+            visited.add(neighbor);
+            queue.push([...path, neighbor]);
+          }
+        }
+      }
+      return null;
+    }
+
+    function navigateToRoom(room) {
+      selectedRoom = room;
+      renderRoomCards(document.getElementById('roomSearch').value);
+
+      const pathCoordinates = getShortestPath(currentLocationNode, room.targetNode);
+      if (!pathCoordinates) return;
+
+      const targetLatLng = nodes[room.targetNode];
+      const destIcon = L.divIcon({
+        className: 'custom-dest',
+        html: '<div class="dest-pin"></div>',
+        iconSize: [20, 20],
+        iconAnchor: [10, 20]
+      });
+
+      if (destinationMarker) {
+        destinationMarker.setLatLng(targetLatLng);
+      } else {
+        destinationMarker = L.marker(targetLatLng, { icon: destIcon }).addTo(map);
+      }
+
+      if (routeLine) map.removeLayer(routeLine);
+      routeLine = L.polyline(pathCoordinates, {
+        color: '#2563eb',
+        weight: 6,
+        opacity: 0.95,
+        lineCap: 'round',
+        lineJoin: 'round'
+      }).addTo(map);
+
+      let distancePixels = 0;
+      for (let i = 1; i < pathCoordinates.length; i++) {
+        distancePixels += Math.hypot(
+          pathCoordinates[i][0] - pathCoordinates[i - 1][0],
+          pathCoordinates[i][1] - pathCoordinates[i - 1][1]
+        );
+      }
+      const estimatedSeconds = Math.max(2, Math.round(distancePixels / 35));
+
+      document.getElementById('startName').innerText = NODE_LABELS[currentLocationNode] || currentLocationNode;
+      document.getElementById('destName').innerText = room.name;
+      document.getElementById('routeTime').innerText = `~${estimatedSeconds} sec walk`;
+      document.getElementById('routeCard').classList.add('active');
+    }
+
+    function clearNavigation() {
+      selectedRoom = null;
+      if (destinationMarker) { map.removeLayer(destinationMarker); destinationMarker = null; }
+      if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
+      document.getElementById('routeCard').classList.remove('active');
+      renderRoomCards(document.getElementById('roomSearch').value);
+      fitFullMap();
+    }
+
+    function toggleSheet() {
+      document.getElementById('sidebar').classList.toggle('hidden-sheet');
+    }
+
+    const roomGrid = document.getElementById('roomGrid');
+
+    function renderRoomCards(filter = "") {
+      roomGrid.innerHTML = "";
+      rooms
+        .filter(r => r.name.toLowerCase().includes(filter.toLowerCase()))
+        .forEach(room => {
+          const card = document.createElement('button');
+          card.className = 'room-card' + (selectedRoom && selectedRoom.id === room.id ? ' active' : '');
+          card.innerText = room.name;
+          card.onclick = () => navigateToRoom(room);
+          roomGrid.appendChild(card);
+        });
+    }
+
+    function filterRooms() {
+      renderRoomCards(document.getElementById('roomSearch').value);
+    }
+
+    renderRoomCards();
+  </script>
+</body>
+</html>
