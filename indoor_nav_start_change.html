@@ -333,8 +333,8 @@
     <div id="sidebar">
       <div class="sheet-grab" onclick="toggleSheet()"></div>
       <div class="sheet-top-row" onclick="toggleSheet()">
-        <span>You are at: <strong id="currentSpotLabel">Main Entrance</strong></span>
-        <span style="color:var(--accent-blue); cursor:pointer;">Tap hallway to move</span>
+        <span>You are in: <strong id="currentSpotLabel">Main Entrance</strong></span>
+        <span style="color:var(--accent-blue); cursor:pointer;">Tap any room or hallway to move</span>
       </div>
 
       <div class="search-box">
@@ -373,17 +373,17 @@
 
     const nodes = {
       "START":      [55, 137],
-      "N_ROOM6":    [1350.5, 137],
-      "D_ROOM6":    [1350.5, 445],
+      "N_ROOM1":    [185, 137],
+      "D_ROOM1":    [185, 689],
       "MAIN_CROSS": [795, 137],
-      "N_ROOM2_4":  [795, 585],
-      "D_ROOM2":    [555, 585],
-      "D_ROOM4":    [1049, 585],
-      "N_ROOM3_5":  [795, 765],
-      "D_ROOM3":    [555, 765],
-      "D_ROOM5":    [1049, 765],
-      "N_ROOM1":    [236, 137],
-      "D_ROOM1":    [236, 445]
+      "N_ROOM2_4":  [795, 485],
+      "D_ROOM2":    [517, 485],
+      "D_ROOM4":    [1081, 485],
+      "N_ROOM3_5":  [795, 890],
+      "D_ROOM3":    [517, 890],
+      "D_ROOM5":    [1081, 890],
+      "N_ROOM6":    [1449, 137],
+      "D_ROOM6":    [1449, 689]
     };
 
     const NODE_LABELS = {
@@ -448,7 +448,7 @@
 
       poly.on('click', function (e) {
         L.DomEvent.stopPropagation(e);
-        navigateToRoom(room);
+        setCurrentLocationByNode(room.targetNode);
       });
     });
 
@@ -472,10 +472,28 @@
     let destinationMarker = null;
     let routeLine = null;
 
+    const corridorNodeKeys = ["START", "N_ROOM1", "MAIN_CROSS", "N_ROOM2_4", "N_ROOM3_5", "N_ROOM6"];
+
+    function findRoomAtLatLng(latlng) {
+      const y = latlng.lat;
+      const x = latlng.lng;
+      for (const room of rooms) {
+        const ys = room.polygon.map(p => p[0]);
+        const xs = room.polygon.map(p => p[1]);
+        if (y >= Math.min(...ys) && y <= Math.max(...ys) && x >= Math.min(...xs) && x <= Math.max(...xs)) {
+          return room;
+        }
+      }
+      return null;
+    }
+
     function nearestNode(latlng) {
-      let bestKey = currentLocationNode;
+      const insideRoom = findRoomAtLatLng(latlng);
+      if (insideRoom) return insideRoom.targetNode;
+
+      let bestKey = "START";
       let bestDist = Infinity;
-      for (const key in nodes) {
+      for (const key of corridorNodeKeys) {
         const [ny, nx] = nodes[key];
         const d = Math.hypot(latlng.lat - ny, latlng.lng - nx);
         if (d < bestDist) { bestDist = d; bestKey = key; }
@@ -483,12 +501,16 @@
       return bestKey;
     }
 
-    function setCurrentLocation(latlng) {
-      currentLocationNode = nearestNode(latlng);
+    function setCurrentLocationByNode(nodeKey) {
+      currentLocationNode = nodeKey;
       personMarker.setLatLng(nodes[currentLocationNode]);
       const label = NODE_LABELS[currentLocationNode] || currentLocationNode;
       document.getElementById('currentSpotLabel').innerText = label;
       if (selectedRoom) navigateToRoom(selectedRoom);
+    }
+
+    function setCurrentLocation(latlng) {
+      setCurrentLocationByNode(nearestNode(latlng));
     }
 
     map.on('mousedown touchstart', () => {

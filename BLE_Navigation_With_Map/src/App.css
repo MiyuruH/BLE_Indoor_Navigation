@@ -159,6 +159,16 @@
   pointer-events: none;
 }
 
+.fp-room-here-tag {
+  fill: #0284c7;
+  font-size: 21px;
+  font-weight: 800;
+  paint-order: stroke;
+  stroke: rgba(255, 255, 255, 0.92);
+  stroke-width: 3.5;
+  pointer-events: none;
+}
+
 .fp-room-beacon-tag {
   fill: #065f46;
   font-size: 20px;
@@ -608,7 +618,49 @@
 .tab-pane {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
+}
+
+.section-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.section-label {
+  font-size: clamp(0.68rem, 2.8vw, 0.74rem);
+  font-weight: 700;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+}
+
+.start-room-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.start-pill {
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  padding: 5px 10px;
+  color: var(--text-muted);
+  font-size: clamp(0.7rem, 2.9vw, 0.76rem);
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.start-pill:active {
+  transform: scale(0.95);
+}
+
+.start-pill.is-active {
+  background: rgba(56, 189, 248, 0.22);
+  border-color: var(--accent);
+  color: #e0f2fe;
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.28);
 }
 
 .search-input {

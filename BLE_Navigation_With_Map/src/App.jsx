@@ -9,17 +9,17 @@ const RSSI_HYSTERESIS_DBM = 3;
 
 const nodes = {
   START: [55, 137],
-  N_ROOM6: [1350.5, 137],
-  D_ROOM6: [1350.5, 445],
+  N_ROOM1: [185, 137],
+  D_ROOM1: [185, 689],
   MAIN_CROSS: [795, 137],
-  N_ROOM2_4: [795, 585],
-  D_ROOM2: [555, 585],
-  D_ROOM4: [1049, 585],
-  N_ROOM3_5: [795, 765],
-  D_ROOM3: [555, 765],
-  D_ROOM5: [1049, 765],
-  N_ROOM1: [236, 137],
-  D_ROOM1: [236, 445],
+  N_ROOM2_4: [795, 485],
+  D_ROOM2: [517, 485],
+  D_ROOM4: [1081, 485],
+  N_ROOM3_5: [795, 890],
+  D_ROOM3: [517, 890],
+  D_ROOM5: [1081, 890],
+  N_ROOM6: [1449, 137],
+  D_ROOM6: [1449, 689],
 };
 
 const NODE_LABELS = {
@@ -58,6 +58,7 @@ const rooms = [
     name: 'No. 300',
     targetNode: 'D_ROOM1',
     center: [689, 185],
+    door: [284.5, 185],
     polygon: [[15, 284.5], [15, 1094.5], [356.5, 1094.5], [356.5, 284.5]],
   },
   {
@@ -65,6 +66,7 @@ const rooms = [
     name: 'No. 301',
     targetNode: 'D_ROOM2',
     center: [485, 517],
+    door: [485, 676.5],
     polygon: [[357.5, 284.5], [357.5, 686.5], [676.5, 686.5], [676.5, 284.5]],
   },
   {
@@ -72,20 +74,23 @@ const rooms = [
     name: 'No. 302',
     targetNode: 'D_ROOM3',
     center: [890, 517],
+    door: [890, 676.5],
     polygon: [[356.5, 685.5], [356.5, 1094.5], [676.5, 1094.5], [676.5, 685.5]],
   },
   {
     id: 'r4',
     name: 'No. 303',
     targetNode: 'D_ROOM4',
-    center: [483, 1081],
+    center: [485, 1081],
+    door: [485, 921.5],
     polygon: [[921.5, 284.5], [921.5, 681.5], [1241.5, 681.5], [1241.5, 284.5]],
   },
   {
     id: 'r5',
     name: 'No. 304',
     targetNode: 'D_ROOM5',
-    center: [888, 1081],
+    center: [890, 1081],
+    door: [890, 921.5],
     polygon: [[921.5, 681.5], [921.5, 1094.5], [1241.5, 1094.5], [1241.5, 681.5]],
   },
   {
@@ -93,6 +98,7 @@ const rooms = [
     name: 'No. 305',
     targetNode: 'D_ROOM6',
     center: [689, 1449],
+    door: [284.5, 1449],
     polygon: [[1234.5, 284.5], [1234.5, 1094.5], [1664.5, 1094.5], [1664.5, 284.5]],
   },
 ];
@@ -166,6 +172,23 @@ function pointForNode(nodeKey) {
   return [x, y];
 }
 
+const CORRIDOR_NODE_KEYS = ['START', 'N_ROOM1', 'MAIN_CROSS', 'N_ROOM2_4', 'N_ROOM3_5', 'N_ROOM6'];
+
+function findRoomContainingPoint(x, y) {
+  for (const room of rooms) {
+    const ys = room.polygon.map((p) => p[0]);
+    const xs = room.polygon.map((p) => p[1]);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    if (x >= minX && x <= maxX && y >= minY && y <= maxY) {
+      return room;
+    }
+  }
+  return null;
+}
+
 function nodeDistance(nodeA, nodeB) {
   const [y1, x1] = nodes[nodeA];
   const [y2, x2] = nodes[nodeB];
@@ -236,6 +259,8 @@ function computeGoogleMapsGuidance(pathNodes, destinationRoom) {
   // Determine immediate next turn instruction at pathNodes[1]
   let icon = '↑';
   let primaryText = `Head straight toward ${NODE_LABELS[pathNodes[1]] || pathNodes[1]}`;
+  const startsInRoom = pathNodes[0].startsWith('D_');
+  const startRoomLabel = NODE_LABELS[pathNodes[0]] || pathNodes[0];
 
   if (pathNodes.length === 2) {
     icon = '📍';
@@ -245,7 +270,18 @@ function computeGoogleMapsGuidance(pathNodes, destinationRoom) {
     const turnDelta = normalizeDeltaDeg(nextBearing - firstBearing);
     const targetLabel = NODE_LABELS[pathNodes[2]] || pathNodes[2];
 
-    if (turnDelta < -20) {
+    if (startsInRoom) {
+      if (turnDelta < -20) {
+        icon = '↰';
+        primaryText = `Exit ${startRoomLabel} and turn left into corridor`;
+      } else if (turnDelta > 20) {
+        icon = '↱';
+        primaryText = `Exit ${startRoomLabel} and turn right into corridor`;
+      } else {
+        icon = '↑';
+        primaryText = `Exit ${startRoomLabel} straight toward ${targetLabel}`;
+      }
+    } else if (turnDelta < -20) {
       icon = '↰';
       primaryText = `Go straight, then turn left toward ${targetLabel}`;
     } else if (turnDelta > 20) {
@@ -383,11 +419,15 @@ function App() {
     if (guidance && !guidance.arrived) {
       return guidance.headingDeg + (compassActive && deviceHeading !== null ? deviceHeading : 0);
     }
+    const defaultFacing =
+      currentLocationNode.startsWith('D_') && graph[currentLocationNode]?.[0]
+        ? segmentBearingDeg(currentLocationNode, graph[currentLocationNode][0])
+        : 180;
     if (compassActive && deviceHeading !== null) {
-      return (180 + deviceHeading) % 360;
+      return (defaultFacing + deviceHeading) % 360;
     }
-    return 180; // Default facing South from Main Entrance down the hallway
-  }, [compassActive, deviceHeading, guidance]);
+    return defaultFacing;
+  }, [compassActive, currentLocationNode, deviceHeading, guidance]);
 
   // Compute overall map rotation: rotates smoothly as the phone turns or when Heads-Up mode is toggled
   const mapRotationDeg = useMemo(() => {
@@ -497,7 +537,7 @@ function App() {
 
     const authLabel = chosen.authenticated ? 'UUID Verified' : 'Verified';
     setStatusMessage(
-      `${chosen.canonicalName} (${Math.round(chosen.smoothedRssi)} dBm • ${authLabel}) → ${
+      `${chosen.canonicalName} (${Math.round(chosen.smoothedRssi)} dBm • ${authLabel}) → Inside ${
         NODE_LABELS[chosen.targetNode]
       }`
     );
@@ -567,10 +607,8 @@ function App() {
       if (typeof device.watchAdvertisements === 'function' && !device.watchingAdvertisements) {
         try {
           await device.watchAdvertisements();
-        } catch (err) {
-          if (err?.name !== 'InvalidStateError' && err?.name !== 'AbortError') {
-            throw err;
-          }
+        } catch {
+          // Safely ignore if watchAdvertisements is already active or experimental flag is disabled
         }
       }
     },
@@ -630,19 +668,15 @@ function App() {
         return;
       }
 
-      // If no other beacons are currently active, immediately snap location to this newly paired beacon
-      if (Object.keys(beaconDataRef.current).length === 0) {
-        setCurrentLocationNode(initialValidation.targetNode);
-      }
+      // Immediately place user inside this beacon's room
+      currentLocRef.current = initialValidation.targetNode;
+      setCurrentLocationNode(initialValidation.targetNode);
 
       if (typeof device.watchAdvertisements === 'function') {
         await watchSingleDevice(device, initialValidation.canonicalName);
-        setStatusMessage(`Watching beacon ${initialValidation.canonicalName} for live RSSI…`);
+        setStatusMessage(`You are in ${initialValidation.canonicalName} (watching live BLE RSSI).`);
       } else {
-        setCurrentLocationNode(initialValidation.targetNode);
-        setStatusMessage(
-          `Mapped to ${initialValidation.canonicalName}. Enable chrome://flags/#enable-experimental-web-platform-features for live RSSI.`
-        );
+        setStatusMessage(`You are in ${initialValidation.canonicalName}. Select where to go.`);
       }
     } catch (error) {
       if (error?.name === 'NotFoundError') {
@@ -876,10 +910,18 @@ function App() {
       y = ((event.clientY - rect.top) / rect.height) * MAP_HEIGHT;
     }
 
+    // If tap is inside a room polygon, place the person dot inside that room
+    const clickedRoom = findRoomContainingPoint(x, y);
+    if (clickedRoom) {
+      setCurrentLocationNode(clickedRoom.targetNode);
+      setStatusMessage(`You are in ${clickedRoom.name}. Select where to go in the panel.`);
+      return;
+    }
+
     let bestNode = 'START';
     let bestDistance = Infinity;
 
-    for (const nodeKey of Object.keys(nodes)) {
+    for (const nodeKey of CORRIDOR_NODE_KEYS) {
       const [nodeY, nodeX] = nodes[nodeKey];
       const distance = Math.hypot(y - nodeY, x - nodeX);
       if (distance < bestDistance) {
@@ -889,14 +931,19 @@ function App() {
     }
 
     setCurrentLocationNode(bestNode);
-    setStatusMessage(`Start location set to ${NODE_LABELS[bestNode] || bestNode}.`);
+    setStatusMessage(`Current location set to ${NODE_LABELS[bestNode] || bestNode}.`);
   };
 
   const handleRoomPolygonClick = (event, room) => {
     event.stopPropagation();
     autoHidePanelOnMapTouch();
     if (gestureRef.current.hasMoved) return;
-    navigateToRoom(room, true);
+    setCurrentLocationNode(room.targetNode);
+    setStatusMessage(
+      selectedRoom
+        ? `You are in ${room.name} → Navigating to ${selectedRoom.name}.`
+        : `You are in ${room.name}. Open panel below to choose where to go.`
+    );
   };
 
   const userPoint = pointForNode(currentLocationNode);
@@ -972,7 +1019,7 @@ function App() {
               const isUserHere = currentLocationNode === room.targetNode;
               const isBeaconLive = Boolean(activeBeacons[room.name]);
               const [cx, cy] = room.center;
-              const doorPt = pointForNode(room.targetNode);
+              const doorPt = room.door;
 
               return (
                 <g
@@ -986,11 +1033,16 @@ function App() {
                   <circle cx={doorPt[0]} cy={doorPt[1]} r="9" className="fp-door-dot" />
                   {/* Room Labels Counter-Rotate so text is always upright like Google Maps */}
                   <g transform={`translate(${cx}, ${cy}) rotate(${counterRotation})`}>
-                    <text x="0" y="0" textAnchor="middle" dominantBaseline="middle" className="fp-room-title">
+                    <text x="0" y="-56" textAnchor="middle" dominantBaseline="middle" className="fp-room-title">
                       {room.name}
                     </text>
+                    {isUserHere && (
+                      <text x="0" y="54" textAnchor="middle" className="fp-room-here-tag">
+                        ● YOU ARE IN {room.name.toUpperCase()}
+                      </text>
+                    )}
                     {isBeaconLive && (
-                      <text x="0" y="36" textAnchor="middle" className="fp-room-beacon-tag">
+                      <text x="0" y={isUserHere ? '84' : '54'} textAnchor="middle" className="fp-room-beacon-tag">
                         ● BLE ({Math.round(activeBeacons[room.name].smoothedRssi)} dBm)
                       </text>
                     )}
@@ -1155,7 +1207,7 @@ function App() {
           <div className="sheet-summary-row">
             <div className="location-summary">
               <span className="summary-dot" />
-              <span className="summary-label">Start:</span>
+              <span className="summary-label">You are in:</span>
               <strong className="summary-value">
                 {NODE_LABELS[currentLocationNode] || currentLocationNode}
               </strong>
@@ -1200,36 +1252,73 @@ function App() {
           <div className="sheet-content">
             {activeTab === 'rooms' && (
               <div className="tab-pane">
-                <div className="search-input-wrap">
-                  <input
-                    type="search"
-                    className="search-input"
-                    value={roomSearch}
-                    onChange={(e) => setRoomSearch(e.target.value)}
-                    placeholder="Search room (No. 300 - No. 305)..."
-                  />
+                {/* 1. CURRENT LOCATION SELECTOR (WHERE YOU ARE NOW) */}
+                <div className="section-block">
+                  <div className="section-label">📍 You Are In (Current Room / Spot):</div>
+                  <div className="start-room-strip">
+                    <button
+                      type="button"
+                      className={`start-pill ${currentLocationNode === 'START' ? 'is-active' : ''}`}
+                      onClick={() => {
+                        setCurrentLocationNode('START');
+                        setStatusMessage('You are at Main Entrance.');
+                      }}
+                    >
+                      Entrance
+                    </button>
+                    {rooms.map((room) => {
+                      const isHere = currentLocationNode === room.targetNode;
+                      return (
+                        <button
+                          key={`start-${room.id}`}
+                          type="button"
+                          className={`start-pill ${isHere ? 'is-active' : ''}`}
+                          onClick={() => {
+                            setCurrentLocationNode(room.targetNode);
+                            setStatusMessage(`You are inside ${room.name}.`);
+                          }}
+                        >
+                          {room.name}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
 
-                <div className="room-grid">
-                  {visibleRooms.map((room) => {
-                    const isDest = selectedRoomId === room.id;
-                    const isStart = currentLocationNode === room.targetNode;
+                {/* 2. DESTINATION SELECTOR (WHERE TO GO) */}
+                <div className="section-block">
+                  <div className="section-label">🚩 Where to Go (Destination Room):</div>
+                  <div className="search-input-wrap">
+                    <input
+                      type="search"
+                      className="search-input"
+                      value={roomSearch}
+                      onChange={(e) => setRoomSearch(e.target.value)}
+                      placeholder="Search destination room (No. 300 - No. 305)..."
+                    />
+                  </div>
 
-                    return (
-                      <button
-                        key={room.id}
-                        type="button"
-                        className={`room-chip ${isDest ? 'is-dest' : ''} ${
-                          isStart ? 'is-start' : ''
-                        }`}
-                        onClick={() => navigateToRoom(room, true)}
-                      >
-                        <span className="room-chip-name">{room.name}</span>
-                        {isDest && <span className="chip-badge badge-go">DEST</span>}
-                        {!isDest && isStart && <span className="chip-badge badge-here">HERE</span>}
-                      </button>
-                    );
-                  })}
+                  <div className="room-grid">
+                    {visibleRooms.map((room) => {
+                      const isDest = selectedRoomId === room.id;
+                      const isStart = currentLocationNode === room.targetNode;
+
+                      return (
+                        <button
+                          key={room.id}
+                          type="button"
+                          className={`room-chip ${isDest ? 'is-dest' : ''} ${
+                            isStart ? 'is-start' : ''
+                          }`}
+                          onClick={() => navigateToRoom(room, true)}
+                        >
+                          <span className="room-chip-name">{room.name}</span>
+                          {isDest && <span className="chip-badge badge-go">GO</span>}
+                          {!isDest && isStart && <span className="chip-badge badge-here">HERE</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
 
                 {selectedRoom && (
