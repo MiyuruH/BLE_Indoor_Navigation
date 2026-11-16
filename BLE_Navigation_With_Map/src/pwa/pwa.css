@@ -1,0 +1,204 @@
+.pwa-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  font-family: inherit;
+}
+
+.pwa-top-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: calc(10px + env(safe-area-inset-top, 0px)) 12px 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.pwa-bottom-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px calc(12px + env(safe-area-inset-bottom, 0px));
+  width: 100%;
+  box-sizing: border-box;
+}
+
+@media (max-width: 899px) {
+  .pwa-top-stack {
+    padding-top: calc(64px + env(safe-area-inset-top, 0px));
+  }
+
+  .pwa-bottom-stack {
+    padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+  }
+
+  #root:has(.turn-banner) .pwa-install-popup,
+  #root:has(.map-status-toast) .pwa-install-popup {
+    display: none;
+  }
+}
+
+@media (max-width: 899px) and (max-height: 460px) {
+  .pwa-install-popup {
+    display: none !important;
+  }
+}
+
+.pwa-top-stack > *,
+.pwa-bottom-stack > * {
+  pointer-events: auto;
+}
+
+.pwa-offline-badge {
+  padding: 5px 14px;
+  border-radius: 999px;
+  background: rgba(234, 179, 8, 0.95);
+  color: #1a1300;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+}
+
+/* Mobile-only top popup banner when loading */
+.pwa-install-popup {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  max-width: 440px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(9, 18, 36, 0.96);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(56, 189, 248, 0.45);
+  color: #f8fafc;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
+  animation: pwaSlideDown 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+  box-sizing: border-box;
+}
+
+@keyframes pwaSlideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-18px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.pwa-install-popup-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 9px;
+  flex-shrink: 0;
+}
+
+.pwa-install-popup-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.pwa-install-popup-text strong {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #f8fafc;
+}
+
+.pwa-install-popup-text span {
+  font-size: 12px;
+  color: #94a3b8;
+  line-height: 1.3;
+}
+
+.pwa-install-popup-text span strong {
+  font-size: 12px;
+  color: #38bdf8;
+}
+
+.pwa-install-popup-action {
+  padding: 7px 14px;
+  border: none;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #38bdf8, #0284c7);
+  color: #041322;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+  flex-shrink: 0;
+  box-shadow: 0 2px 10px rgba(56, 189, 248, 0.35);
+}
+
+.pwa-install-popup-close {
+  padding: 4px 7px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+/* Hide the custom install popup on desktop viewports so PC relies purely on the browser address bar */
+@media (min-width: 769px) and (pointer: fine) {
+  .pwa-install-popup {
+    display: none !important;
+  }
+}
+
+/* Never show the install banner inside an already-installed PWA window */
+@media (display-mode: standalone), (display-mode: minimal-ui), (display-mode: fullscreen), (display-mode: window-controls-overlay) {
+  .pwa-install-popup {
+    display: none !important;
+  }
+}
+
+.pwa-toast {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 480px;
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: #0b1a2e;
+  border: 1px solid rgba(34, 211, 238, 0.35);
+  color: #e2e8f0;
+  font-size: 14px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+  box-sizing: border-box;
+}
+
+.pwa-toast span {
+  flex: 1;
+}
+
+.pwa-toast button {
+  padding: 6px 12px;
+  border: none;
+  border-radius: 8px;
+  background: #22d3ee;
+  color: #06202a;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.pwa-toast button.ghost {
+  background: transparent;
+  color: #94a3b8;
+  border: 1px solid #334155;
+}

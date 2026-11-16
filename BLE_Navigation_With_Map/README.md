@@ -1,16 +1,50 @@
-# React + Vite
+# Indoor Navigation – Smart Room Tracker (PWA)
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+BLE-based indoor navigation with an interactive campus map, built with React + Vite.
+The app is a **Progressive Web App (PWA)**: users can install it on their phone/laptop
+and use it **fully offline** (no internet connection needed after the first visit).
 
-Currently, two official plugins are available:
+## Scripts
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+```bash
+npm install        # install dependencies
+npm run dev        # development server (service worker disabled in dev)
+npm run build      # production build -> dist/ (generates sw.js + manifest)
+npm run preview    # serve the production build locally to test the PWA
+npm run icons      # regenerate the app icons in public/icons/
+```
 
-## React Compiler
+## How offline mode works
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- `vite-plugin-pwa` (Workbox) generates a service worker at build time that **precaches
+  every file** of the app (HTML, JS, CSS, icons).
+- After the first load, the app opens instantly from device storage, even in airplane mode.
+- The map, rooms, routing and BLE logic all run on the device, so nothing needs the internet.
+- When a new version is deployed, users see an **"A new version is available → Update"** toast.
+- An **"Offline mode"** badge appears at the top when the device has no connection.
 
-## Expanding the ESLint configuration
+## Installing the app
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+| Platform | How |
+| --- | --- |
+| Android (Chrome/Edge) | Tap the **⬇ Install App** button, or browser menu → *Install app* |
+| Windows / macOS / Linux (Chrome/Edge) | Install icon in the address bar, or the **⬇ Install App** button |
+| iPhone / iPad (Safari) | Share → **Add to Home Screen** (tap *Install App* for a hint) |
+
+> **Note:** Web Bluetooth (beacon scanning) is only supported in Chromium browsers
+> (Chrome / Edge) on Android, Windows, macOS, Linux and ChromeOS. iOS Safari does not
+> support Web Bluetooth, so on iPhone the map works but BLE scanning will not.
+
+## Deployment requirements
+
+- PWAs and Web Bluetooth **require HTTPS** (or `http://localhost`). Deploy `dist/` to any
+  static HTTPS host – e.g. Netlify, Vercel, GitHub Pages, Firebase Hosting.
+- The app is configured for hosting at the domain root (`/`). If you host under a
+  sub-path (e.g. GitHub Pages `/repo-name/`), set `base: '/repo-name/'` in
+  `vite.config.js` and update `start_url`/`scope` in the manifest accordingly.
+
+## Testing offline locally
+
+1. `npm run build && npm run preview`
+2. Open the URL in Chrome → DevTools → **Application** → check *Manifest* and *Service Workers*.
+3. In DevTools → **Network**, choose *Offline* and reload – the app still works.

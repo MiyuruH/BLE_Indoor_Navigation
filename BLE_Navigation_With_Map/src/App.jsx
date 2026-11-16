@@ -1,11 +1,35 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import './App.css';
+import ProjectGuide from './components/ProjectGuide.jsx';
+import {
+  bearingDegBetweenPoints,
+  buildWalkableEdges,
+  computeLiveRouteFromPosition,
+  computeRealtimeGuidance,
+  extractPhoneHeadingDeg,
+  getShortestPathData,
+  kalmanUpdateRssi,
+  normalizeDeltaDeg,
+  pointForNode as navPointForNode,
+  resolveRouteJunctionHeading,
+  rssiToDistanceMeters,
+  snapPointToEdges,
+  solveRealtimeBeaconPosition,
+} from './utils/indoorNavigation.js';
 
 const MAP_WIDTH = 1102;
 const MAP_HEIGHT = 1672;
 const BLE_SERVICE_UUID = '12345678-1234-1234-1234-1234567890ab';
+const BEACON_FILTERS = [
+  { name: 'a01' },
+  { name: 'b01' },
+  { namePrefix: 'No.' },
+  { services: [BLE_SERVICE_UUID] },
+];
 const BEACON_TIMEOUT_MS = 15000;
-const RSSI_HYSTERESIS_DBM = 3;
+const RSSI_SAMPLE_INTERVAL_MS = 200;
+const RSSI_SAMPLE_WINDOW = 7;
+const MIN_RSSI_SAMPLES = 1;
 
 const nodes = {
   START: [55, 137],
@@ -129,6 +153,7 @@ const AUTHORIZED_BEACONS = {
   no301: { canonicalName: 'No. 301', targetNode: 'D_ROOM2' },
   room301: { canonicalName: 'No. 301', targetNode: 'D_ROOM2' },
   '301': { canonicalName: 'No. 301', targetNode: 'D_ROOM2' },
+  a01: { canonicalName: 'No. 301', targetNode: 'D_ROOM2' },
   no302: { canonicalName: 'No. 302', targetNode: 'D_ROOM3' },
   room302: { canonicalName: 'No. 302', targetNode: 'D_ROOM3' },
   '302': { canonicalName: 'No. 302', targetNode: 'D_ROOM3' },
@@ -138,6 +163,7 @@ const AUTHORIZED_BEACONS = {
   no304: { canonicalName: 'No. 304', targetNode: 'D_ROOM5' },
   room304: { canonicalName: 'No. 304', targetNode: 'D_ROOM5' },
   '304': { canonicalName: 'No. 304', targetNode: 'D_ROOM5' },
+  b01: { canonicalName: 'No. 304', targetNode: 'D_ROOM5' },
   no305: { canonicalName: 'No. 305', targetNode: 'D_ROOM6' },
   room305: { canonicalName: 'No. 305', targetNode: 'D_ROOM6' },
   '305': { canonicalName: 'No. 305', targetNode: 'D_ROOM6' },
@@ -168,11 +194,27 @@ function validateBeacon(rawName, advertisedUuids = [], gattVerified = false) {
 }
 
 function pointForNode(nodeKey) {
-  const [y, x] = nodes[nodeKey] || nodes.START;
-  return [x, y];
+  return navPointForNode(nodes, nodeKey);
 }
 
-const CORRIDOR_NODE_KEYS = ['START', 'N_ROOM1', 'MAIN_CROSS', 'N_ROOM2_4', 'N_ROOM3_5', 'N_ROOM6'];
+const WALKABLE_EDGES = buildWalkableEdges(graph);
+const CORRIDOR_EDGES = WALKABLE_EDGES.filter(
+  ([u, v]) => !u.startsWith('D_') && !v.startsWith('D_')
+);
+
+function createNodePosition(nodeKey, source = 'manual', accuracyPx = 38) {
+  const [x, y] = pointForNode(nodeKey);
+  const neighbor = graph[nodeKey]?.[0] || nodeKey;
+  return {
+    x,
+    y,
+    edge: [nodeKey, neighbor],
+    t: 0,
+    nearestNode: nodeKey,
+    accuracyPx,
+    source,
+  };
+}
 
 function findRoomContainingPoint(x, y) {
   for (const room of rooms) {
@@ -189,192 +231,49 @@ function findRoomContainingPoint(x, y) {
   return null;
 }
 
-function nodeDistance(nodeA, nodeB) {
-  const [y1, x1] = nodes[nodeA];
-  const [y2, x2] = nodes[nodeB];
-  return Math.hypot(x2 - x1, y2 - y1);
-}
-
 /**
  * Heading angle in degrees (0° = Up/North, 90° = Right/East, 180° = Down/South, -90° = Left/West)
  */
 function segmentBearingDeg(fromNode, toNode) {
   const [x1, y1] = pointForNode(fromNode);
   const [x2, y2] = pointForNode(toNode);
-  return (Math.atan2(x2 - x1, -(y2 - y1)) * 180) / Math.PI;
-}
-
-function normalizeDeltaDeg(angleDiff) {
-  return ((angleDiff + 540) % 360) - 180;
-}
-
-/**
- * Computes Google Maps-style turn-by-turn instruction, turn icon, final side ("on your left/right"),
- * and the ideal Heads-Up map rotation angle so the user's walking direction points UP.
- */
-function computeGoogleMapsGuidance(pathNodes, destinationRoom) {
-  if (!destinationRoom || !pathNodes || pathNodes.length === 0) {
-    return null;
-  }
-
-  if (pathNodes.length === 1) {
-    return {
-      icon: '📍',
-      primaryText: `You have arrived at ${destinationRoom.name}`,
-      secondaryText: `Destination ${destinationRoom.name} is right here`,
-      headingDeg: 0,
-      arrived: true,
-    };
-  }
-
-  // First segment bearing (direction the user needs to walk right now)
-  const firstBearing = segmentBearingDeg(pathNodes[0], pathNodes[1]);
-
-  // Determine the final turn into the destination room (e.g. "Destination will be on your left/right")
-  let finalSideText = `Destination ${destinationRoom.name} is straight ahead`;
-  if (pathNodes.length >= 3) {
-    const penultimateBearing = segmentBearingDeg(
-      pathNodes[pathNodes.length - 3],
-      pathNodes[pathNodes.length - 2]
-    );
-    const doorBearing = segmentBearingDeg(
-      pathNodes[pathNodes.length - 2],
-      pathNodes[pathNodes.length - 1]
-    );
-    const finalTurnDelta = normalizeDeltaDeg(doorBearing - penultimateBearing);
-    if (finalTurnDelta < -20) {
-      finalSideText = `Destination ${destinationRoom.name} will be on your left`;
-    } else if (finalTurnDelta > 20) {
-      finalSideText = `Destination ${destinationRoom.name} will be on your right`;
-    }
-  } else if (pathNodes.length === 2) {
-    // Direct step into the room from the adjacent hallway node
-    const [hx, hy] = pointForNode(pathNodes[0]);
-    const [dx, dy] = pointForNode(pathNodes[1]);
-    if (Math.abs(dx - hx) > Math.abs(dy - hy)) {
-      finalSideText = `Enter ${destinationRoom.name} directly ahead`;
-    }
-  }
-
-  // Determine immediate next turn instruction at pathNodes[1]
-  let icon = '↑';
-  let primaryText = `Head straight toward ${NODE_LABELS[pathNodes[1]] || pathNodes[1]}`;
-  const startsInRoom = pathNodes[0].startsWith('D_');
-  const startRoomLabel = NODE_LABELS[pathNodes[0]] || pathNodes[0];
-
-  if (pathNodes.length === 2) {
-    icon = '📍';
-    primaryText = `Enter ${destinationRoom.name} ahead`;
-  } else if (pathNodes.length >= 3) {
-    const nextBearing = segmentBearingDeg(pathNodes[1], pathNodes[2]);
-    const turnDelta = normalizeDeltaDeg(nextBearing - firstBearing);
-    const targetLabel = NODE_LABELS[pathNodes[2]] || pathNodes[2];
-
-    if (startsInRoom) {
-      if (turnDelta < -20) {
-        icon = '↰';
-        primaryText = `Exit ${startRoomLabel} and turn left into corridor`;
-      } else if (turnDelta > 20) {
-        icon = '↱';
-        primaryText = `Exit ${startRoomLabel} and turn right into corridor`;
-      } else {
-        icon = '↑';
-        primaryText = `Exit ${startRoomLabel} straight toward ${targetLabel}`;
-      }
-    } else if (turnDelta < -20) {
-      icon = '↰';
-      primaryText = `Go straight, then turn left toward ${targetLabel}`;
-    } else if (turnDelta > 20) {
-      icon = '↱';
-      primaryText = `Go straight, then turn right toward ${targetLabel}`;
-    } else {
-      icon = '↑';
-      primaryText = `Continue straight past ${NODE_LABELS[pathNodes[1]]}`;
-    }
-  }
-
-  return {
-    icon,
-    primaryText,
-    secondaryText: finalSideText,
-    headingDeg: firstBearing,
-    arrived: false,
-  };
-}
-
-function getShortestPathNodes(startNode, endNode) {
-  if (!startNode || !endNode || !nodes[startNode] || !nodes[endNode]) return [];
-  if (startNode === endNode) return [startNode];
-
-  const distances = {};
-  const previous = {};
-  const unvisited = new Set(Object.keys(nodes));
-
-  for (const key of unvisited) {
-    distances[key] = Infinity;
-  }
-  distances[startNode] = 0;
-
-  while (unvisited.size > 0) {
-    let current = null;
-    let smallestDist = Infinity;
-
-    for (const key of unvisited) {
-      if (distances[key] < smallestDist) {
-        smallestDist = distances[key];
-        current = key;
-      }
-    }
-
-    if (!current || current === endNode || smallestDist === Infinity) break;
-    unvisited.delete(current);
-
-    for (const neighbor of graph[current] || []) {
-      if (!unvisited.has(neighbor)) continue;
-      const alt = distances[current] + nodeDistance(current, neighbor);
-      if (alt < distances[neighbor]) {
-        distances[neighbor] = alt;
-        previous[neighbor] = current;
-      }
-    }
-  }
-
-  if (distances[endNode] === Infinity) return [];
-
-  const path = [];
-  let step = endNode;
-  while (step) {
-    path.unshift(step);
-    step = previous[step];
-  }
-  return path;
+  return bearingDegBetweenPoints(x1, y1, x2, y2);
 }
 
 function App() {
   const [activeBeacons, setActiveBeacons] = useState({});
-  const [currentLocationNode, setCurrentLocationNode] = useState('START');
+  const [livePosition, setLivePosition] = useState(() => createNodePosition('START', 'manual', 38));
+  const currentLocationNode = livePosition.nearestNode;
   const [selectedRoomId, setSelectedRoomId] = useState(null);
+  const [customPin, setCustomPin] = useState(null);
   const [roomSearch, setRoomSearch] = useState('');
   const [panelOpen, setPanelOpen] = useState(true);
   const [activeTab, setActiveTab] = useState('rooms'); // 'rooms' | 'beacons'
+  const [guideOpen, setGuideOpen] = useState(false);
   const [isScanningAll, setIsScanningAll] = useState(false);
+  const [isReloading, setIsReloading] = useState(false);
   const [statusMessage, setStatusMessage] = useState('Tap a room to navigate or connect BLE beacons.');
 
-  // Google Maps Rotation & Compass state
+  // Google Maps Rotation & Person Gyroscope state
   const [headsUpMode, setHeadsUpMode] = useState(false);
   const [compassActive, setCompassActive] = useState(true);
-  const [deviceHeading, setDeviceHeading] = useState(null);
+  const [sensorEpoch, setSensorEpoch] = useState(0);
   const [manualRotation, setManualRotation] = useState(0);
   const [isGestureActive, setIsGestureActive] = useState(false);
   const [transform, setTransform] = useState({ scale: 1, x: 0, y: 0 });
 
   const svgRef = useRef(null);
+  const userGroupRef = useRef(null);
+  const userAccuracyRef = useRef(null);
+  const userBeamRef = useRef(null);
+  const routeCasingRef = useRef(null);
+  const routeLineRef = useRef(null);
+  const routeFlowRef = useRef(null);
   const activePointersRef = useRef(new Map());
   const gestureRef = useRef({
     hasMoved: false,
     lastCenter: null,
     lastPinchDist: null,
-    lastTwistAngle: null,
   });
 
   const beaconDataRef = useRef({});
@@ -382,11 +281,79 @@ function App() {
   const globalAdvListenerRef = useRef(null);
   const activeScanRef = useRef(null);
   const currentLocRef = useRef(currentLocationNode);
+  const livePosRef = useRef(livePosition);
+  const targetPosRef = useRef(livePosition);
+  const visualPosRef = useRef({
+    x: livePosition.x,
+    y: livePosition.y,
+    accuracyPx: livePosition.accuracyPx,
+  });
+  const routeTailRef = useRef([]);
+  const lastTravelAlignPosRef = useRef({ x: livePosition.x, y: livePosition.y });
   const compassBaselineRef = useRef(null);
+  const deviceHeadingRef = useRef(0);
+  const headingAtBaselineRef = useRef(180);
+  const hasGyroSampleRef = useRef(false);
+  const alignedHeadingRef = useRef(null);
+  const junctionLockRef = useRef(null);
+  const gyroTurnCandidateRef = useRef(null);
+  const headsUpModeRef = useRef(headsUpMode);
 
   useEffect(() => {
     currentLocRef.current = currentLocationNode;
-  }, [currentLocationNode]);
+    livePosRef.current = livePosition;
+  }, [currentLocationNode, livePosition]);
+
+  useEffect(() => {
+    headsUpModeRef.current = headsUpMode;
+  }, [headsUpMode]);
+
+  const moveUserToNode = useCallback((nodeKey, source = 'manual') => {
+    const nextPos = createNodePosition(nodeKey, source, 38);
+    lastTravelAlignPosRef.current = { x: nextPos.x, y: nextPos.y };
+    setLivePosition(nextPos);
+  }, []);
+
+  useEffect(() => {
+    const deviceListeners = deviceListenersRef.current;
+    return () => {
+      if (activeScanRef.current?.active) {
+        try {
+          activeScanRef.current.stop();
+        } catch {
+          // Ignore scan stop errors during unmount
+        }
+        activeScanRef.current = null;
+      }
+      if (globalAdvListenerRef.current && navigator.bluetooth) {
+        try {
+          navigator.bluetooth.removeEventListener(
+            'advertisementreceived',
+            globalAdvListenerRef.current
+          );
+        } catch {
+          // Ignore listener removal errors during unmount
+        }
+        globalAdvListenerRef.current = null;
+      }
+      deviceListeners.forEach((entry, key) => {
+        try {
+          if (typeof entry === 'function' && key?.removeEventListener) {
+            key.removeEventListener('advertisementreceived', entry);
+          } else if (entry && typeof entry === 'object') {
+            if (entry.device?.removeEventListener && entry.handler) {
+              entry.device.removeEventListener('advertisementreceived', entry.handler);
+            }
+            if (typeof entry.unwatch === 'function') entry.unwatch();
+            if (typeof entry.abort === 'function') entry.abort();
+          }
+        } catch {
+          // Ignore cleanup errors during unmount
+        }
+      });
+      deviceListeners.clear();
+    };
+  }, []);
 
   const autoHidePanelOnMapTouch = useCallback(() => {
     if (window.innerWidth < 900) {
@@ -394,79 +361,373 @@ function App() {
     }
   }, []);
 
+  const handleMobileReload = useCallback(async () => {
+    if (isReloading) return;
+    setIsReloading(true);
+    try {
+      if (navigator.onLine && 'serviceWorker' in navigator) {
+        const reg = await navigator.serviceWorker.getRegistration();
+        if (reg) {
+          await Promise.race([
+            (async () => {
+              await reg.update().catch(() => {});
+              const candidate = reg.waiting || reg.installing;
+              if (candidate) {
+                await new Promise((done) => {
+                  const activateWaiting = () => {
+                    if (reg.waiting) {
+                      reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+                    }
+                  };
+                  navigator.serviceWorker.addEventListener('controllerchange', done, { once: true });
+                  candidate.addEventListener('statechange', () => {
+                    if (candidate.state === 'installed') activateWaiting();
+                  });
+                  activateWaiting();
+                });
+              }
+            })(),
+            new Promise((resolve) => setTimeout(resolve, 2500)),
+          ]);
+        }
+      }
+    } catch {
+      // Proceed with reload even if service worker check fails
+    }
+    window.location.reload();
+  }, [isReloading]);
+
   const selectedRoom = useMemo(
     () => rooms.find((item) => item.id === selectedRoomId) || null,
     [selectedRoomId]
   );
 
-  const pathNodes = useMemo(() => {
-    if (!selectedRoom) return [];
-    return getShortestPathNodes(currentLocationNode, selectedRoom.targetNode);
-  }, [currentLocationNode, selectedRoom]);
+  const activeDestination = useMemo(() => {
+    if (selectedRoom) {
+      return {
+        kind: 'room',
+        id: selectedRoom.id,
+        name: selectedRoom.name,
+        targetNode: selectedRoom.targetNode,
+        point: pointForNode(selectedRoom.targetNode),
+      };
+    }
+    if (customPin) {
+      return {
+        kind: 'pin',
+        id: 'custom-pin',
+        name: customPin.name,
+        targetNode: customPin.nearestNode,
+        x: customPin.x,
+        y: customPin.y,
+        edge: customPin.edge,
+        point: [customPin.x, customPin.y],
+      };
+    }
+    return null;
+  }, [selectedRoom, customPin]);
 
-  const routePoints = useMemo(
-    () => pathNodes.map((nodeKey) => pointForNode(nodeKey)),
-    [pathNodes]
-  );
+  const routeData = useMemo(() => {
+    if (!activeDestination) {
+      return { points: [], remainingNodes: [], distancePx: 0, distanceMeters: 0, seconds: 0 };
+    }
+    return computeLiveRouteFromPosition({
+      nodes,
+      graph,
+      userPos: livePosition,
+      destNode: activeDestination.targetNode,
+      destPos: activeDestination.kind === 'pin' ? activeDestination : null,
+    });
+  }, [livePosition, activeDestination]);
+
+  const routePoints = routeData.points;
+  const pathNodes = routeData.remainingNodes;
+
+  useEffect(() => {
+    routeTailRef.current = routeData.points.slice(1);
+  }, [routeData.points]);
+
+  // Smooth 60 FPS visual glide for Google Maps dot + accuracy halo + trimmed live route start
+  useEffect(() => {
+    targetPosRef.current = livePosition;
+    let rafId = null;
+    const gain = livePosition.source === 'manual' ? 0.34 : 0.22;
+
+    const glideFrame = () => {
+      rafId = null;
+      const target = targetPosRef.current;
+      const cur = visualPosRef.current;
+      const dx = target.x - cur.x;
+      const dy = target.y - cur.y;
+      const dr = target.accuracyPx - cur.accuracyPx;
+
+      if (Math.hypot(dx, dy) < 0.4 && Math.abs(dr) < 0.5) {
+        cur.x = target.x;
+        cur.y = target.y;
+        cur.accuracyPx = target.accuracyPx;
+      } else {
+        cur.x += dx * gain;
+        cur.y += dy * gain;
+        cur.accuracyPx += dr * gain;
+        rafId = requestAnimationFrame(glideFrame);
+      }
+
+      const vx = Math.round(cur.x * 10) / 10;
+      const vy = Math.round(cur.y * 10) / 10;
+      const vr = Math.round(cur.accuracyPx);
+
+      userGroupRef.current?.setAttribute('transform', `translate(${vx}, ${vy})`);
+      userAccuracyRef.current?.setAttribute('r', `${vr}`);
+
+      if (routeTailRef.current.length > 0) {
+        const ptsAttr = [[vx, vy], ...routeTailRef.current]
+          .map(([px, py]) => `${Math.round(px * 10) / 10},${Math.round(py * 10) / 10}`)
+          .join(' ');
+        routeCasingRef.current?.setAttribute('points', ptsAttr);
+        routeLineRef.current?.setAttribute('points', ptsAttr);
+        routeFlowRef.current?.setAttribute('points', ptsAttr);
+      }
+    };
+
+    rafId = requestAnimationFrame(glideFrame);
+    return () => {
+      if (rafId !== null) cancelAnimationFrame(rafId);
+    };
+  }, [livePosition]);
 
   const guidance = useMemo(
-    () => computeGoogleMapsGuidance(pathNodes, selectedRoom),
-    [pathNodes, selectedRoom]
+    () =>
+      computeRealtimeGuidance({
+        routeData,
+        destinationRoom: activeDestination,
+        nodeLabels: NODE_LABELS,
+        userNearestNode: livePosition.nearestNode,
+      }),
+    [routeData, activeDestination, livePosition.nearestNode]
   );
 
-  // Compute active user heading (from live phone compass OR current route segment)
-  const activeUserHeadingDeg = useMemo(() => {
+  // Default user facing direction when compass/gyroscope hasn't calibrated yet
+  const defaultFacingDeg = useMemo(() => {
     if (guidance && !guidance.arrived) {
-      return guidance.headingDeg + (compassActive && deviceHeading !== null ? deviceHeading : 0);
+      return guidance.headingDeg;
     }
-    const defaultFacing =
-      currentLocationNode.startsWith('D_') && graph[currentLocationNode]?.[0]
-        ? segmentBearingDeg(currentLocationNode, graph[currentLocationNode][0])
-        : 180;
-    if (compassActive && deviceHeading !== null) {
-      return (defaultFacing + deviceHeading) % 360;
+    if (livePosition.edge && livePosition.edge[0] !== livePosition.edge[1]) {
+      const [u, v] = livePosition.edge;
+      if (currentLocationNode.startsWith('D_') && graph[currentLocationNode]?.[0]) {
+        return segmentBearingDeg(currentLocationNode, graph[currentLocationNode][0]);
+      }
+      const forwardNode = currentLocationNode === u ? v : u;
+      return segmentBearingDeg(currentLocationNode, forwardNode);
     }
-    return defaultFacing;
-  }, [compassActive, currentLocationNode, deviceHeading, guidance]);
+    return 180;
+  }, [currentLocationNode, guidance, livePosition.edge]);
 
-  // Compute overall map rotation: rotates smoothly as the phone turns or when Heads-Up mode is toggled
+  // Initial/re-rendered person beam angle (between renders, rAF rotates userBeamRef directly at 60 FPS)
+  const initialUserHeadingDeg = compassActive
+    ? Math.round((headingAtBaselineRef.current + deviceHeadingRef.current) * 10) / 10
+    : defaultFacingDeg;
+
+  // Before the first gyroscope sample arrives (or while compass is off), keep beam aligned with route/door direction
+  useEffect(() => {
+    if (!hasGyroSampleRef.current || !compassActive) {
+      headingAtBaselineRef.current = defaultFacingDeg;
+      deviceHeadingRef.current = 0;
+      userBeamRef.current?.setAttribute(
+        'transform',
+        `rotate(${Math.round(defaultFacingDeg * 10) / 10})`
+      );
+    }
+  }, [defaultFacingDeg, compassActive]);
+
+  const [mapToast, setMapToast] = useState('');
+  const hasMountedStatusRef = useRef(false);
+
+  useEffect(() => {
+    if (!hasMountedStatusRef.current) {
+      hasMountedStatusRef.current = true;
+      return;
+    }
+    if (!statusMessage || panelOpen || window.innerWidth >= 900) {
+      setMapToast('');
+      return;
+    }
+    setMapToast(statusMessage);
+    const timer = setTimeout(() => setMapToast(''), 4200);
+    return () => clearTimeout(timer);
+  }, [statusMessage, panelOpen]);
+
+  // Map stays steady along straight corridors and while turning on the spot; it rotates at start
+  // and when reaching/turning at an actual route turn or junction (headsUpMode).
+  const unwrappedRotationRef = useRef(0);
   const mapRotationDeg = useMemo(() => {
-    const baseRouteRotation =
-      headsUpMode && guidance && !guidance.arrived ? -guidance.headingDeg : manualRotation;
-    const liveTurnOffset = compassActive && deviceHeading !== null ? -deviceHeading : 0;
-    return baseRouteRotation + liveTurnOffset;
-  }, [compassActive, deviceHeading, headsUpMode, guidance, manualRotation]);
+    const prev = unwrappedRotationRef.current;
+    const next = prev + normalizeDeltaDeg(manualRotation - prev);
+    unwrappedRotationRef.current = next;
+    return next;
+  }, [manualRotation]);
 
-  // Live Phone Gyroscope / Compass listener for real-time turning rotation
+  useEffect(() => {
+    if (!headsUpMode || !activeDestination || guidance?.arrived || routeData.points.length < 2) {
+      gyroTurnCandidateRef.current = null;
+      if (!headsUpMode || !activeDestination) {
+        alignedHeadingRef.current = null;
+        junctionLockRef.current = null;
+      }
+      return;
+    }
+
+    const liveSvgHeading =
+      hasGyroSampleRef.current && compassActive
+        ? headingAtBaselineRef.current + deviceHeadingRef.current
+        : null;
+
+    const res = resolveRouteJunctionHeading({
+      routePoints: routeData.points,
+      alignedHeadingDeg: alignedHeadingRef.current,
+      liveHeadingDeg: liveSvgHeading,
+      junctionState: junctionLockRef.current,
+    });
+
+    junctionLockRef.current = res.junctionState;
+    gyroTurnCandidateRef.current = res.gyroTurnCandidate;
+
+    if (
+      res.targetHeadingDeg !== null &&
+      (alignedHeadingRef.current === null ||
+        Math.abs(normalizeDeltaDeg(res.targetHeadingDeg - alignedHeadingRef.current)) >= 1)
+    ) {
+      alignedHeadingRef.current = res.targetHeadingDeg;
+      setManualRotation(-res.targetHeadingDeg);
+    }
+  }, [routeData.points, activeDestination, headsUpMode, compassActive, guidance?.arrived]);
+
+  // Live phone gyroscope -> rotates ONLY the blue person dot's directional beam directly via SVG transform
   useEffect(() => {
     if (!compassActive) return undefined;
 
-    const handleOrientation = (event) => {
-      let heading = null;
-      if (typeof event.webkitCompassHeading === 'number') {
-        heading = event.webkitCompassHeading;
-      } else if (typeof event.alpha === 'number') {
-        heading = (360 - event.alpha) % 360;
-      }
-      if (heading === null || Number.isNaN(heading)) return;
+    let lockedSource = null; // Prefer 'relative' IMU gyro; fall back to 'absolute' only if unavailable
+    let allowAbsoluteFallback = false;
+    let lastRawHeading = null;
+    let unwrappedHeading = null;
+    let smoothed = null;
+    let lastEventTs = 0;
+    let rafId = null;
 
-      // Calibrate baseline to 0° when the user first holds the phone so turning left/right rotates relative to initial hold
-      if (compassBaselineRef.current === null) {
-        compassBaselineRef.current = heading;
+    const fallbackTimer = setTimeout(() => {
+      if (!lockedSource) {
+        allowAbsoluteFallback = true;
       }
+    }, 350);
 
-      const deltaTurn = normalizeDeltaDeg(heading - compassBaselineRef.current);
-      setDeviceHeading(Math.abs(deltaTurn) < 2 ? 0 : Math.round(deltaTurn));
+    const screenAngle = () => {
+      const angle = window.screen?.orientation?.angle ?? window.orientation ?? 0;
+      return Number(angle) || 0;
     };
 
-    window.addEventListener('deviceorientationabsolute', handleOrientation, true);
-    window.addEventListener('deviceorientation', handleOrientation, true);
+    const applyBeamAngle = (angleDeg) => {
+      const rounded = Math.round(angleDeg * 10) / 10;
+      userBeamRef.current?.setAttribute('transform', `rotate(${rounded})`);
+    };
+
+    const tick = () => {
+      rafId = null;
+      if (unwrappedHeading === null) return;
+
+      if (compassBaselineRef.current === null) {
+        smoothed = unwrappedHeading;
+        compassBaselineRef.current = unwrappedHeading;
+        hasGyroSampleRef.current = true;
+      } else if (smoothed === null) {
+        smoothed = unwrappedHeading;
+      }
+
+      const diff = unwrappedHeading - smoothed;
+      if (Math.abs(diff) > 0.35) {
+        const gain = Math.abs(diff) > 15 ? 0.32 : 0.24;
+        smoothed += diff * gain;
+      } else {
+        smoothed = unwrappedHeading;
+      }
+
+      const relative = smoothed - compassBaselineRef.current;
+      deviceHeadingRef.current = relative;
+      const liveSvgHeading = headingAtBaselineRef.current + relative;
+      applyBeamAngle(liveSvgHeading);
+
+      const cand = gyroTurnCandidateRef.current;
+      if (headsUpModeRef.current && cand) {
+        const distNext = Math.abs(normalizeDeltaDeg(liveSvgHeading - cand.nextBearing));
+        const distCur = Math.abs(normalizeDeltaDeg(liveSvgHeading - cand.curBearing));
+        if (distNext <= 38 && distNext + 12 < distCur) {
+          gyroTurnCandidateRef.current = null;
+          alignedHeadingRef.current = cand.nextBearing;
+          junctionLockRef.current = {
+            cornerX: cand.cornerX,
+            cornerY: cand.cornerY,
+            headingDeg: cand.nextBearing,
+          };
+          setManualRotation(-cand.nextBearing);
+        }
+      }
+
+      if (Math.abs(unwrappedHeading - smoothed) > 0.25) {
+        rafId = requestAnimationFrame(tick);
+      }
+    };
+
+    const processOrientationEvent = (event, sourceType) => {
+      if (lockedSource && lockedSource !== sourceType) return;
+      if (
+        sourceType === 'absolute' &&
+        !allowAbsoluteFallback &&
+        lockedSource !== 'absolute'
+      ) {
+        return;
+      }
+
+      const heading = extractPhoneHeadingDeg(event, screenAngle());
+      if (heading === null || !Number.isFinite(heading)) return;
+
+      if (!lockedSource) {
+        lockedSource = sourceType;
+      }
+
+      const nowTs = performance.now();
+      const dtSec = lastEventTs ? Math.max(0.008, (nowTs - lastEventTs) / 1000) : 0.02;
+      lastEventTs = nowTs;
+
+      if (lastRawHeading !== null) {
+        const rawDelta = normalizeDeltaDeg(heading - lastRawHeading);
+        // Reject impossible instantaneous >105 deg glitches within <40ms
+        if (Math.abs(rawDelta) > 105 && dtSec < 0.04) {
+          return;
+        }
+        const maxStep = Math.max(45, Math.min(90, dtSec * 420));
+        const clampedDelta = Math.max(-maxStep, Math.min(maxStep, rawDelta));
+        unwrappedHeading += clampedDelta;
+      } else {
+        unwrappedHeading = heading;
+      }
+      lastRawHeading = heading;
+
+      if (rafId === null) {
+        rafId = requestAnimationFrame(tick);
+      }
+    };
+
+    const onRelativeOrientation = (e) => processOrientationEvent(e, 'relative');
+    const onAbsoluteOrientation = (e) => processOrientationEvent(e, 'absolute');
+
+    window.addEventListener('deviceorientation', onRelativeOrientation, true);
+    window.addEventListener('deviceorientationabsolute', onAbsoluteOrientation, true);
 
     return () => {
-      window.removeEventListener('deviceorientationabsolute', handleOrientation, true);
-      window.removeEventListener('deviceorientation', handleOrientation, true);
+      clearTimeout(fallbackTimer);
+      window.removeEventListener('deviceorientation', onRelativeOrientation, true);
+      window.removeEventListener('deviceorientationabsolute', onAbsoluteOrientation, true);
+      if (rafId !== null) cancelAnimationFrame(rafId);
     };
-  }, [compassActive]);
+  }, [compassActive, sensorEpoch]);
 
   const toggleCompassAndRotation = async () => {
     try {
@@ -476,71 +737,116 @@ function App() {
       ) {
         const perm = await DeviceOrientationEvent.requestPermission();
         if (perm === 'granted') {
-          compassBaselineRef.current = null;
           setCompassActive(true);
+          setSensorEpoch((prev) => prev + 1);
         }
       }
     } catch {
       // Ignore on browsers that don't require explicit permission
     }
 
-    if (!headsUpMode) {
-      compassBaselineRef.current = null;
-      setDeviceHeading(0);
-      setCompassActive(true);
-      setHeadsUpMode(true);
-      setManualRotation(0);
-      setStatusMessage('Heads-Up Navigation ON: Map rotates with route & phone turns.');
+    setCompassActive(true);
+    compassBaselineRef.current = null;
+    deviceHeadingRef.current = 0;
+
+    if (!headsUpMode && guidance && !guidance.arrived) {
+      alignRouteOnce(routeData);
+      setStatusMessage('Map aligned to route & turns. Person indicator tracks your phone direction.');
     } else {
-      compassBaselineRef.current = null;
-      setDeviceHeading(0);
+      headingAtBaselineRef.current = defaultFacingDeg;
+      alignedHeadingRef.current = null;
+      junctionLockRef.current = null;
+      gyroTurnCandidateRef.current = null;
       setHeadsUpMode(false);
       setManualRotation(0);
-      setStatusMessage('Map reset to North-Up (0°).');
+      userBeamRef.current?.setAttribute(
+        'transform',
+        `rotate(${Math.round(defaultFacingDeg * 10) / 10})`
+      );
+      setStatusMessage('Map set to North-Up (0°). Person indicator calibrated.');
     }
   };
 
   const refreshLocationFromBeacons = useCallback(() => {
     const now = Date.now();
-    const liveList = Object.values(beaconDataRef.current).filter(
-      (b) => b.valid && now - b.lastSeen < BEACON_TIMEOUT_MS
-    );
+    const knownList = Object.values(beaconDataRef.current).filter((b) => b.valid);
+    const liveList = knownList.filter((b) => now - b.lastSeen < BEACON_TIMEOUT_MS);
 
     const nextState = {};
-    liveList.forEach((b) => {
+    knownList.forEach((b) => {
       nextState[b.canonicalName] = {
         ...b,
         ageSeconds: Math.max(0, Math.round((now - b.lastSeen) / 1000)),
+        isLive: now - b.lastSeen < BEACON_TIMEOUT_MS,
       };
     });
     setActiveBeacons(nextState);
 
-    if (liveList.length === 0) return;
+    if (liveList.length === 0) {
+      if (knownList.length > 0) {
+        setStatusMessage('No live beacon signal. Keeping last estimated location.');
+      }
+      return;
+    }
 
-    const sorted = [...liveList].sort((a, b) => b.smoothedRssi - a.smoothedRssi);
-    const strongest = sorted[0];
+    const qualifiedList = liveList.filter((b) => b.sampleCount >= MIN_RSSI_SAMPLES);
+    if (qualifiedList.length === 0) return;
 
-    const currentBeacon = liveList.find((b) => b.targetNode === currentLocRef.current);
-    let chosen = strongest;
+    const solved = solveRealtimeBeaconPosition({
+      liveBeacons: qualifiedList,
+      nodes,
+      graph,
+      edges: WALKABLE_EDGES,
+      prevPos: livePosRef.current,
+    });
+    if (!solved) return;
 
+    // Gentle Google Maps course-over-ground fusion when real BLE walking spans > 1.2m
+    const lastAnchor = lastTravelAlignPosRef.current;
+    const travelDist = Math.hypot(solved.x - lastAnchor.x, solved.y - lastAnchor.y);
+    if (livePosRef.current.source === 'ble' && travelDist >= 52) {
+      const travelBearing = bearingDegBetweenPoints(
+        lastAnchor.x,
+        lastAnchor.y,
+        solved.x,
+        solved.y
+      );
+      lastTravelAlignPosRef.current = { x: solved.x, y: solved.y };
+      if (!hasGyroSampleRef.current) {
+        headingAtBaselineRef.current = travelBearing;
+        userBeamRef.current?.setAttribute(
+          'transform',
+          `rotate(${Math.round(travelBearing * 10) / 10})`
+        );
+      }
+    } else if (livePosRef.current.source !== 'ble') {
+      lastTravelAlignPosRef.current = { x: solved.x, y: solved.y };
+    }
+
+    const cur = livePosRef.current;
+    const movedPx = Math.hypot(solved.x - cur.x, solved.y - cur.y);
     if (
-      currentBeacon &&
-      currentBeacon.canonicalName !== strongest.canonicalName &&
-      strongest.smoothedRssi - currentBeacon.smoothedRssi < RSSI_HYSTERESIS_DBM
+      cur.source !== 'ble' ||
+      movedPx >= 3 ||
+      solved.nearestNode !== cur.nearestNode ||
+      Math.abs(solved.accuracyPx - cur.accuracyPx) >= 3
     ) {
-      chosen = currentBeacon;
+      setLivePosition(solved);
     }
 
-    if (chosen.targetNode && chosen.targetNode !== currentLocRef.current) {
-      setCurrentLocationNode(chosen.targetNode);
+    const sortedByDist = [...qualifiedList].sort((a, b) => a.distanceMeters - b.distanceMeters);
+    const closest = sortedByDist[0];
+    const second = sortedByDist[1];
+    if (second) {
+      setStatusMessage(
+        `Live BLE (${sortedByDist.length}): ${closest.canonicalName} (~${closest.distanceMeters.toFixed(1)} m), ${second.canonicalName} (~${second.distanceMeters.toFixed(1)} m) → ${NODE_LABELS[solved.nearestNode]}`
+      );
+    } else {
+      const authLabel = closest.authenticated ? 'UUID' : 'Valid';
+      setStatusMessage(
+        `Tracking ${closest.canonicalName} (~${closest.distanceMeters.toFixed(1)} m • ${Math.round(closest.smoothedRssi)} dBm • ${authLabel}) → ${NODE_LABELS[solved.nearestNode]}`
+      );
     }
-
-    const authLabel = chosen.authenticated ? 'UUID Verified' : 'Verified';
-    setStatusMessage(
-      `${chosen.canonicalName} (${Math.round(chosen.smoothedRssi)} dBm • ${authLabel}) → Inside ${
-        NODE_LABELS[chosen.targetNode]
-      }`
-    );
   }, []);
 
   useEffect(() => {
@@ -548,7 +854,7 @@ function App() {
       if (Object.keys(beaconDataRef.current).length > 0) {
         refreshLocationFromBeacons();
       }
-    }, 1000);
+    }, 500);
     return () => clearInterval(timer);
   }, [refreshLocationFromBeacons]);
 
@@ -565,9 +871,25 @@ function App() {
 
       const slotKey = validation.canonicalName;
       const existing = beaconDataRef.current[slotKey];
-      const smoothedRssi = existing
-        ? existing.smoothedRssi * 0.6 + rawRssi * 0.4
-        : rawRssi;
+      const now = Date.now();
+      const hasRecentReading = existing && now - existing.lastSeen < BEACON_TIMEOUT_MS;
+      const recentSamples = hasRecentReading ? existing.samples : [];
+      const addSample =
+        !hasRecentReading ||
+        now - (existing.lastSampledAt || 0) >= RSSI_SAMPLE_INTERVAL_MS;
+      const samples = addSample
+        ? [...recentSamples, rawRssi].slice(-RSSI_SAMPLE_WINDOW)
+        : recentSamples;
+
+      const kalman = addSample
+        ? kalmanUpdateRssi(
+            hasRecentReading ? existing.kalmanRssi : null,
+            hasRecentReading ? existing.kalmanCov : null,
+            rawRssi
+          )
+        : { rssi: existing.kalmanRssi, covariance: existing.kalmanCov };
+
+      const distanceMeters = rssiToDistanceMeters(kalman.rssi);
 
       beaconDataRef.current[slotKey] = {
         id: deviceId || slotKey,
@@ -576,10 +898,16 @@ function App() {
         canonicalName: validation.canonicalName,
         targetNode: validation.targetNode,
         rssi: rawRssi,
-        smoothedRssi,
+        kalmanRssi: kalman.rssi,
+        kalmanCov: kalman.covariance,
+        smoothedRssi: kalman.rssi,
+        distanceMeters,
+        samples,
+        sampleCount: samples.length,
+        lastSampledAt: addSample ? now : existing.lastSampledAt,
         valid: true,
         authenticated: Boolean(existing?.authenticated || validation.authenticated),
-        lastSeen: Date.now(),
+        lastSeen: now,
       };
 
       refreshLocationFromBeacons();
@@ -615,6 +943,50 @@ function App() {
     [recordBeaconReading]
   );
 
+  const startAdvertisementScan = useCallback(async () => {
+    if (!navigator.bluetooth) {
+      return {
+        started: false,
+        message: 'Web Bluetooth is not available in this browser. Use Chrome or Edge.',
+      };
+    }
+
+    if (typeof navigator.bluetooth.requestLEScan !== 'function') {
+      return {
+        started: false,
+        message: 'Simultaneous BLE scanning is not supported here. Use Add Beacon for each device.',
+      };
+    }
+
+    if (activeScanRef.current?.active) {
+      return { started: true, message: 'Simultaneous BLE scan is already active.' };
+    }
+
+    try {
+      if (!globalAdvListenerRef.current) {
+        const onGlobalAdv = (event) => {
+          const rawName = event.device?.name || event.name || '';
+          const advUuids = event.uuids || [];
+          recordBeaconReading(event.device?.id, rawName, event.rssi, advUuids);
+        };
+        navigator.bluetooth.addEventListener('advertisementreceived', onGlobalAdv);
+        globalAdvListenerRef.current = onGlobalAdv;
+      }
+
+      activeScanRef.current = await navigator.bluetooth.requestLEScan({
+        filters: BEACON_FILTERS,
+        keepRepeatedDevices: true,
+      });
+      setIsScanningAll(true);
+      return { started: true, message: 'Scanning nearby beacons together.' };
+    } catch (error) {
+      return {
+        started: false,
+        message: `Could not start simultaneous BLE scan: ${error?.message || 'Unknown error'}.`,
+      };
+    }
+  }, [recordBeaconReading]);
+
   useEffect(() => {
     let mounted = true;
     async function restoreSavedBeacons() {
@@ -649,15 +1021,16 @@ function App() {
   const connectBeacon = async () => {
     try {
       if (!navigator.bluetooth) {
-        setStatusMessage('Web Bluetooth is not available in this browser. Use Chrome or Edge.');
+        setStatusMessage('Web Bluetooth is not available in this browser. Use Chrome or Edge on HTTPS.');
+        setActiveTab('beacons');
+        if (window.innerWidth < 900) {
+          setPanelOpen(true);
+        }
         return;
       }
 
       const device = await navigator.bluetooth.requestDevice({
-        filters: [
-          { namePrefix: 'No.' },
-          { services: [BLE_SERVICE_UUID] },
-        ],
+        filters: BEACON_FILTERS,
         optionalServices: [BLE_SERVICE_UUID],
       });
 
@@ -668,15 +1041,30 @@ function App() {
         return;
       }
 
-      // Immediately place user inside this beacon's room
-      currentLocRef.current = initialValidation.targetNode;
-      setCurrentLocationNode(initialValidation.targetNode);
-
+      const canWatchDevice = typeof device.watchAdvertisements === 'function';
       if (typeof device.watchAdvertisements === 'function') {
         await watchSingleDevice(device, initialValidation.canonicalName);
-        setStatusMessage(`You are in ${initialValidation.canonicalName} (watching live BLE RSSI).`);
+      }
+
+      const scanResult = await startAdvertisementScan();
+      if (scanResult.started) {
+        setStatusMessage(
+          `${scanResult.message} Location follows the nearest stable signal.`
+        );
+      } else if (canWatchDevice) {
+        const scanHelp =
+          typeof navigator.bluetooth.requestLEScan === 'function'
+            ? 'If other beacons stop updating, start Scan Nearby.'
+            : 'This browser cannot monitor multiple beacons with a shared scan.';
+        setStatusMessage(
+          `Watching ${initialValidation.canonicalName}. ${scanResult.message} ${scanHelp}`
+        );
       } else {
-        setStatusMessage(`You are in ${initialValidation.canonicalName}. Select where to go.`);
+        currentLocRef.current = initialValidation.targetNode;
+        moveUserToNode(initialValidation.targetNode, 'manual');
+        setStatusMessage(
+          `You are in ${initialValidation.canonicalName}, but live BLE tracking is unavailable. ${scanResult.message}`
+        );
       }
     } catch (error) {
       if (error?.name === 'NotFoundError') {
@@ -689,61 +1077,38 @@ function App() {
 
   const startAutoScanBeacons = async () => {
     if (!navigator.bluetooth) {
-      setStatusMessage('Web Bluetooth is not available in this browser. Use Chrome or Edge.');
+      setStatusMessage('Web Bluetooth is not available in this browser. Use Chrome or Edge on HTTPS.');
+      setActiveTab('beacons');
+      if (window.innerWidth < 900) {
+        setPanelOpen(true);
+      }
       return;
     }
 
-    if (typeof navigator.bluetooth.requestLEScan === 'function') {
-      try {
-        if (activeScanRef.current?.active) {
-          activeScanRef.current.stop();
-          setIsScanningAll(false);
-          setStatusMessage('Auto-scan stopped.');
-          return;
-        }
-
-        if (!globalAdvListenerRef.current) {
-          const onGlobalAdv = (event) => {
-            const rawName = event.device?.name || event.name || '';
-            const advUuids = event.uuids || [];
-            recordBeaconReading(event.device?.id, rawName, event.rssi, advUuids);
-          };
-          navigator.bluetooth.addEventListener('advertisementreceived', onGlobalAdv);
-          globalAdvListenerRef.current = onGlobalAdv;
-        }
-
-        const scan = await navigator.bluetooth.requestLEScan({
-          filters: [
-            { namePrefix: 'No.' },
-            { services: [BLE_SERVICE_UUID] },
-          ],
-          keepRepeatedDevices: true,
-        });
-
-        activeScanRef.current = scan;
-        setIsScanningAll(true);
-        setStatusMessage('Auto-scanning all No. 300 – No. 305 beacons…');
-        return;
-      } catch {
-        // Fall through to connectBeacon if requestLEScan is unsupported on this OS
-      }
+    if (activeScanRef.current?.active) {
+      activeScanRef.current.stop();
+      activeScanRef.current = null;
+      setIsScanningAll(false);
+      setStatusMessage('Auto-scan stopped.');
+      return;
     }
 
-    await connectBeacon();
+    const scanResult = await startAdvertisementScan();
+    setStatusMessage(
+      scanResult.started
+        ? `${scanResult.message} Location follows the nearest stable signal.`
+        : `${scanResult.message} Use Add Beacon to select devices individually.`
+    );
   };
 
-  const routeMetrics = useMemo(() => {
-    if (routePoints.length <= 1) {
-      return { distancePixels: 0, seconds: 0 };
-    }
-    const distancePixels = routePoints.reduce((acc, pt, idx) => {
-      if (idx === 0) return 0;
-      const prev = routePoints[idx - 1];
-      return acc + Math.hypot(pt[0] - prev[0], pt[1] - prev[1]);
-    }, 0);
-    const seconds = Math.max(1, Math.round(distancePixels / 35));
-    return { distancePixels, seconds };
-  }, [routePoints]);
+  const routeMetrics = useMemo(
+    () => ({
+      distancePixels: routeData.distancePx,
+      distanceMeters: routeData.distanceMeters,
+      seconds: routeData.seconds,
+    }),
+    [routeData]
+  );
 
   const visibleRooms = useMemo(() => {
     const q = roomSearch.trim().toLowerCase();
@@ -752,17 +1117,29 @@ function App() {
   }, [roomSearch]);
 
   const debugBeacons = useMemo(
-    () => Object.values(activeBeacons).sort((a, b) => b.smoothedRssi - a.smoothedRssi),
+    () =>
+      Object.values(activeBeacons).sort(
+        (a, b) => Number(b.isLive) - Number(a.isLive) || b.smoothedRssi - a.smoothedRssi
+      ),
     [activeBeacons]
   );
+  const liveBeaconCount = debugBeacons.filter((beacon) => beacon.isLive).length;
 
   const resetMapView = useCallback(() => {
     setTransform({ scale: 1, x: 0, y: 0 });
     compassBaselineRef.current = null;
-    setDeviceHeading(0);
+    deviceHeadingRef.current = 0;
+    headingAtBaselineRef.current = defaultFacingDeg;
+    alignedHeadingRef.current = null;
+    junctionLockRef.current = null;
+    gyroTurnCandidateRef.current = null;
     setHeadsUpMode(false);
     setManualRotation(0);
-  }, []);
+    userBeamRef.current?.setAttribute(
+      'transform',
+      `rotate(${Math.round(defaultFacingDeg * 10) / 10})`
+    );
+  }, [defaultFacingDeg]);
 
   const zoomBy = useCallback((deltaFactor) => {
     setTransform((prev) => {
@@ -772,17 +1149,99 @@ function App() {
     });
   }, []);
 
-  const navigateToRoom = useCallback((room, hidePanel = false) => {
-    setSelectedRoomId(room.id);
-    setStatusMessage(`Navigating to ${room.name}.`);
-    if (hidePanel && window.innerWidth < 900) {
-      setPanelOpen(false);
+  const alignRouteOnce = useCallback((nextRoute) => {
+    if (nextRoute.points.length >= 2) {
+      const res = resolveRouteJunctionHeading({
+        routePoints: nextRoute.points,
+        alignedHeadingDeg: null,
+      });
+      const pathDirectionDeg =
+        res.targetHeadingDeg ??
+        bearingDegBetweenPoints(
+          nextRoute.points[0][0],
+          nextRoute.points[0][1],
+          nextRoute.points[1][0],
+          nextRoute.points[1][1]
+        );
+      alignedHeadingRef.current = pathDirectionDeg;
+      junctionLockRef.current = res.junctionState;
+      gyroTurnCandidateRef.current = res.gyroTurnCandidate;
+      setHeadsUpMode(true);
+      setManualRotation(-pathDirectionDeg);
+      compassBaselineRef.current = null;
+      deviceHeadingRef.current = 0;
+      headingAtBaselineRef.current = pathDirectionDeg;
+      userBeamRef.current?.setAttribute('transform', `rotate(${Math.round(pathDirectionDeg * 10) / 10})`);
+    } else {
+      alignedHeadingRef.current = null;
+      junctionLockRef.current = null;
+      gyroTurnCandidateRef.current = null;
+      setHeadsUpMode(false);
+      setManualRotation(0);
     }
   }, []);
 
+  const navigateToRoom = useCallback(
+    (room, hidePanel = false) => {
+      setCustomPin(null);
+      setSelectedRoomId(room.id);
+
+      // Rotate the map ONCE to align with the initial direction of the live path, then keep the map still
+      // while the person dot's directional cone rotates with the phone's gyroscope.
+      const nextRoute = computeLiveRouteFromPosition({
+        nodes,
+        graph,
+        userPos: livePosRef.current,
+        destNode: room.targetNode,
+      });
+      alignRouteOnce(nextRoute);
+
+      setStatusMessage(`Pinned destination: ${room.name}.`);
+      if (hidePanel && window.innerWidth < 900) {
+        setPanelOpen(false);
+      }
+    },
+    [alignRouteOnce]
+  );
+
+  const navigateToPin = useCallback(
+    (pin, hidePanel = false) => {
+      setSelectedRoomId(null);
+      setCustomPin(pin);
+
+      const nextRoute = computeLiveRouteFromPosition({
+        nodes,
+        graph,
+        userPos: livePosRef.current,
+        destNode: pin.nearestNode,
+        destPos: pin,
+      });
+      alignRouteOnce(nextRoute);
+
+      setStatusMessage(`Pinned destination: ${pin.name}.`);
+      if (hidePanel && window.innerWidth < 900) {
+        setPanelOpen(false);
+      }
+    },
+    [alignRouteOnce]
+  );
+
   const clearNavigation = useCallback(() => {
     setSelectedRoomId(null);
+    setCustomPin(null);
+    alignedHeadingRef.current = null;
+    junctionLockRef.current = null;
+    gyroTurnCandidateRef.current = null;
+    setHeadsUpMode(false);
     setManualRotation(0);
+    compassBaselineRef.current = null;
+    deviceHeadingRef.current = 0;
+    const idleDeg =
+      currentLocRef.current.startsWith('D_') && graph[currentLocRef.current]?.[0]
+        ? segmentBearingDeg(currentLocRef.current, graph[currentLocRef.current][0])
+        : 180;
+    headingAtBaselineRef.current = idleDeg;
+    userBeamRef.current?.setAttribute('transform', `rotate(${Math.round(idleDeg * 10) / 10})`);
     setStatusMessage('Navigation cleared.');
   }, []);
 
@@ -796,7 +1255,6 @@ function App() {
       gestureRef.current.hasMoved = false;
       gestureRef.current.lastCenter = { x: pts[0].x, y: pts[0].y };
       gestureRef.current.lastPinchDist = null;
-      gestureRef.current.lastTwistAngle = null;
     } else if (pts.length === 2) {
       gestureRef.current.hasMoved = true;
       setIsGestureActive(true);
@@ -805,8 +1263,6 @@ function App() {
         y: (pts[0].y + pts[1].y) / 2,
       };
       gestureRef.current.lastPinchDist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
-      gestureRef.current.lastTwistAngle =
-        (Math.atan2(pts[1].y - pts[0].y, pts[1].x - pts[0].x) * 180) / Math.PI;
     }
   };
 
@@ -838,7 +1294,6 @@ function App() {
         y: (pts[0].y + pts[1].y) / 2,
       };
       const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
-      const twistAngle = (Math.atan2(pts[1].y - pts[0].y, pts[1].x - pts[0].x) * 180) / Math.PI;
 
       if (gestureRef.current.lastPinchDist && gestureRef.current.lastPinchDist > 0) {
         const ratio = dist / gestureRef.current.lastPinchDist;
@@ -852,18 +1307,8 @@ function App() {
         }));
       }
 
-      if (gestureRef.current.lastTwistAngle !== null) {
-        const deltaAngle = normalizeDeltaDeg(twistAngle - gestureRef.current.lastTwistAngle);
-        if (Math.abs(deltaAngle) > 1.2) {
-          setHeadsUpMode(false);
-          setCompassActive(false);
-          setManualRotation((prev) => (prev + deltaAngle) % 360);
-        }
-      }
-
       gestureRef.current.lastCenter = center;
       gestureRef.current.lastPinchDist = dist;
-      gestureRef.current.lastTwistAngle = twistAngle;
     }
   };
 
@@ -873,11 +1318,9 @@ function App() {
     if (pts.length === 1) {
       gestureRef.current.lastCenter = { x: pts[0].x, y: pts[0].y };
       gestureRef.current.lastPinchDist = null;
-      gestureRef.current.lastTwistAngle = null;
     } else if (pts.length === 0) {
       gestureRef.current.lastCenter = null;
       gestureRef.current.lastPinchDist = null;
-      gestureRef.current.lastTwistAngle = null;
       setIsGestureActive(false);
     }
   };
@@ -910,48 +1353,54 @@ function App() {
       y = ((event.clientY - rect.top) / rect.height) * MAP_HEIGHT;
     }
 
-    // If tap is inside a room polygon, place the person dot inside that room
+    // Tapping a room polygon pins it as your destination (never moves the user's tracked location)
     const clickedRoom = findRoomContainingPoint(x, y);
     if (clickedRoom) {
-      setCurrentLocationNode(clickedRoom.targetNode);
-      setStatusMessage(`You are in ${clickedRoom.name}. Select where to go in the panel.`);
+      navigateToRoom(clickedRoom, true);
       return;
     }
 
-    let bestNode = 'START';
-    let bestDistance = Infinity;
+    // Tapping any corridor / entrance spot drops a destination pin along the walkway
+    const snapped = snapPointToEdges(x, y, nodes, CORRIDOR_EDGES);
+    const [startX, startY] = pointForNode('START');
+    const nearEntrance =
+      snapped.nearestNode === 'START' && Math.hypot(snapped.x - startX, snapped.y - startY) < 85;
+    const pinName = nearEntrance
+      ? 'Main Entrance'
+      : `Corridor (${NODE_LABELS[snapped.nearestNode] || snapped.nearestNode})`;
 
-    for (const nodeKey of CORRIDOR_NODE_KEYS) {
-      const [nodeY, nodeX] = nodes[nodeKey];
-      const distance = Math.hypot(y - nodeY, x - nodeX);
-      if (distance < bestDistance) {
-        bestDistance = distance;
-        bestNode = nodeKey;
-      }
-    }
-
-    setCurrentLocationNode(bestNode);
-    setStatusMessage(`Current location set to ${NODE_LABELS[bestNode] || bestNode}.`);
+    navigateToPin(
+      {
+        name: pinName,
+        x: nearEntrance ? startX : snapped.x,
+        y: nearEntrance ? startY : snapped.y,
+        edge: snapped.edge,
+        nearestNode: snapped.nearestNode,
+      },
+      true
+    );
   };
 
   const handleRoomPolygonClick = (event, room) => {
     event.stopPropagation();
     autoHidePanelOnMapTouch();
     if (gestureRef.current.hasMoved) return;
-    setCurrentLocationNode(room.targetNode);
-    setStatusMessage(
-      selectedRoom
-        ? `You are in ${room.name} → Navigating to ${selectedRoom.name}.`
-        : `You are in ${room.name}. Open panel below to choose where to go.`
-    );
+    navigateToRoom(room, true);
   };
 
-  const userPoint = pointForNode(currentLocationNode);
-  const destPoint = selectedRoom ? pointForNode(selectedRoom.targetNode) : null;
+  const userPoint = [
+    Math.round(visualPosRef.current.x * 10) / 10,
+    Math.round(visualPosRef.current.y * 10) / 10,
+  ];
+  const visualAccuracyPx = Math.round(visualPosRef.current.accuracyPx);
+  const renderedRoutePoints =
+    routePoints.length > 1 ? [userPoint, ...routePoints.slice(1)] : [];
+  const renderedRouteStr = renderedRoutePoints.map(([rx, ry]) => `${rx},${ry}`).join(' ');
+  const destPoint = activeDestination ? activeDestination.point : null;
   const counterRotation = -mapRotationDeg;
 
   return (
-    <div className="nav-app">
+    <div className={`nav-app ${panelOpen ? 'sidebar-is-open' : 'sidebar-is-hidden'}`}>
       {/* FULL-SCREEN INTERACTIVE & ROTATABLE FLOOR PLAN */}
       <main
         className={`map-viewport ${panelOpen ? 'panel-is-open' : 'panel-is-hidden'}`}
@@ -980,8 +1429,8 @@ function App() {
                 <feDropShadow dx="0" dy="4" stdDeviation="8" floodColor="#38bdf8" floodOpacity="0.45" />
               </filter>
               <radialGradient id="beamGrad" cx="50%" cy="100%" r="100%">
-                <stop offset="0%" stopColor="#38bdf8" stopOpacity="0.55" />
-                <stop offset="100%" stopColor="#38bdf8" stopOpacity="0" />
+                <stop offset="0%" stopColor="#38bdf8" stopOpacity="0.78" />
+                <stop offset="100%" stopColor="#38bdf8" stopOpacity="0.04" />
               </radialGradient>
             </defs>
 
@@ -1017,7 +1466,7 @@ function App() {
             {rooms.map((room) => {
               const isSelected = selectedRoomId === room.id;
               const isUserHere = currentLocationNode === room.targetNode;
-              const isBeaconLive = Boolean(activeBeacons[room.name]);
+              const isBeaconLive = Boolean(activeBeacons[room.name]?.isLive);
               const [cx, cy] = room.center;
               const doorPt = room.door;
 
@@ -1053,19 +1502,22 @@ function App() {
 
             <line x1="1094.5" y1="665" x2="1094.5" y2="794" className="fp-wall-stub" />
 
-            {routePoints.length > 1 && (
+            {renderedRoutePoints.length > 1 && (
               <g className="fp-route-group">
                 <polyline
-                  points={routePoints.map(([x, y]) => `${x},${y}`).join(' ')}
+                  ref={routeCasingRef}
+                  points={renderedRouteStr}
                   className="fp-route-casing"
                 />
                 <polyline
-                  points={routePoints.map(([x, y]) => `${x},${y}`).join(' ')}
+                  ref={routeLineRef}
+                  points={renderedRouteStr}
                   className="fp-route-line"
                   filter="url(#glowFilter)"
                 />
                 <polyline
-                  points={routePoints.map(([x, y]) => `${x},${y}`).join(' ')}
+                  ref={routeFlowRef}
+                  points={renderedRouteStr}
                   className="fp-route-flow"
                 />
               </g>
@@ -1086,10 +1538,22 @@ function App() {
               </g>
             )}
 
-            {/* Google Maps Blue User Dot + Directional Heading Cone */}
-            <g transform={`translate(${userPoint[0]}, ${userPoint[1]})`} className="fp-user-group">
-              <g transform={`rotate(${activeUserHeadingDeg})`}>
-                <path d="M 0 0 L -46 -110 A 120 120 0 0 1 46 -110 Z" fill="url(#beamGrad)" />
+            {/* Google Maps Blue User Dot + Accuracy Halo + Gyroscope-Driven Directional Heading Cone */}
+            <g
+              ref={userGroupRef}
+              transform={`translate(${userPoint[0]}, ${userPoint[1]})`}
+              className="fp-user-group"
+            >
+              <circle ref={userAccuracyRef} r={visualAccuracyPx} className="fp-user-accuracy" />
+              <g ref={userBeamRef} transform={`rotate(${initialUserHeadingDeg})`}>
+                <path d="M 0 0 L -54 -128 A 140 140 0 0 1 54 -128 Z" fill="url(#beamGrad)" />
+                <path
+                  d="M 0 -30 L -9 -14 L 9 -14 Z"
+                  fill="#38bdf8"
+                  stroke="#ffffff"
+                  strokeWidth="3"
+                  strokeLinejoin="round"
+                />
               </g>
               <circle r="34" className="fp-user-pulse" />
               <circle r="15" className="fp-user-dot" />
@@ -1103,25 +1567,50 @@ function App() {
       <header className="top-hud">
         <div className="hud-bar">
           <div className="brand-text">
-            <span className="brand-kicker">3RD FLOOR NAVIGATION</span>
+            <span className="brand-kicker">BLE INDOOR NAVIGATION</span>
             <h1 className="brand-title">Smart Room Tracker</h1>
           </div>
 
-          <button
-            type="button"
-            className={`ble-pill-btn ${isScanningAll || debugBeacons.length > 0 ? 'is-live' : ''}`}
-            onClick={connectBeacon}
-          >
-            <span className="ble-dot" />
-            <span>
-              {debugBeacons.length > 0
-                ? `BLE (${debugBeacons.length}) • + Add`
-                : '+ Add Beacon'}
-            </span>
-          </button>
+          <div className="hud-bar-actions">
+            <button
+              type="button"
+              className={`ble-pill-btn ${isScanningAll || debugBeacons.length > 0 ? 'is-live' : ''}`}
+              onClick={connectBeacon}
+            >
+              <span className="ble-dot" />
+              <span>
+                {debugBeacons.length > 0
+                  ? `BLE (${liveBeaconCount}) • + Add`
+                  : '+ Add Beacon'}
+              </span>
+            </button>
+            <button
+              type="button"
+              className={`mobile-reload-btn ${isReloading ? 'is-spinning' : ''}`}
+              onClick={handleMobileReload}
+              disabled={isReloading}
+              aria-label="Reload app"
+              title="Reload page"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                width="17"
+                height="17"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.3"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+                <polyline points="21 3 21 9 15 9" />
+              </svg>
+            </button>
+          </div>
         </div>
 
-        {selectedRoom && guidance && (
+        {activeDestination && guidance && (
           <div className="turn-banner" role="status" aria-live="polite">
             <div className="turn-direction-box" aria-hidden="true">
               {guidance.icon}
@@ -1131,8 +1620,8 @@ function App() {
               <div className="turn-destination-side">{guidance.secondaryText}</div>
               <div className="turn-meta">
                 {guidance.arrived
-                  ? `You are at ${selectedRoom.name}`
-                  : `${NODE_LABELS[currentLocationNode]} → ${selectedRoom.name} • ~${routeMetrics.seconds} sec`}
+                  ? `You are at ${activeDestination.name}`
+                  : `${NODE_LABELS[currentLocationNode]} → ${activeDestination.name} • ~${routeMetrics.distanceMeters} m • ~${routeMetrics.seconds} sec`}
               </div>
             </div>
             <button
@@ -1145,10 +1634,31 @@ function App() {
             </button>
           </div>
         )}
+
+        {mapToast && (
+          <button
+            type="button"
+            className="map-status-toast"
+            onClick={() => setMapToast('')}
+            role="status"
+            aria-live="polite"
+            title="Tap to dismiss"
+          >
+            {mapToast}
+          </button>
+        )}
       </header>
 
-      {/* MAP COMPASS, ROTATION & ZOOM CONTROLS */}
+      {/* MAP FLOOR BADGE, COMPASS, ROTATION & ZOOM CONTROLS */}
       <div className="map-fab-stack" aria-label="Map controls">
+        <div
+          className="map-floor-tile"
+          aria-label="Active floor: 3rd Floor"
+          title="Active Map: 3rd Floor"
+        >
+          <span className="map-floor-kicker">FLR</span>
+          <strong className="map-floor-num">3</strong>
+        </div>
         <button
           type="button"
           className={`fab-btn compass-btn ${compassActive || mapRotationDeg !== 0 ? 'is-active' : ''}`}
@@ -1167,8 +1677,10 @@ function App() {
           type="button"
           className="fab-btn"
           onClick={() => {
+            alignedHeadingRef.current = null;
+            junctionLockRef.current = null;
+            gyroTurnCandidateRef.current = null;
             setHeadsUpMode(false);
-            setCompassActive(false);
             setManualRotation((prev) => (prev - 90) % 360);
           }}
           aria-label="Rotate map 90 degrees"
@@ -1187,11 +1699,27 @@ function App() {
         </button>
       </div>
 
-      {/* AUTO-HIDING BOTTOM DRAWER (MOBILE/TABLET) & LEFT PANEL (DESKTOP) */}
+      {/* AUTO-HIDING BOTTOM DRAWER (MOBILE/TABLET) & COLLAPSIBLE SIDEBAR (DESKTOP) */}
       <aside
         className={`control-sheet ${panelOpen ? 'is-open' : 'is-hidden'}`}
         aria-label="Navigation panel"
       >
+        <button
+          type="button"
+          className="pc-sidebar-edge-tab"
+          onClick={() => setPanelOpen((prev) => !prev)}
+          aria-expanded={panelOpen}
+          aria-label={panelOpen ? 'Hide sidebar' : 'Show sidebar'}
+          title={panelOpen ? 'Hide sidebar' : 'Show sidebar'}
+        >
+          <span className="pc-sidebar-edge-arrow" aria-hidden="true">
+            {panelOpen ? '◀' : '▶'}
+          </span>
+          <span className="pc-sidebar-edge-label">
+            {panelOpen ? 'Hide' : 'Menu'}
+          </span>
+        </button>
+
         <div
           className="sheet-header"
           onClick={() => setPanelOpen((prev) => !prev)}
@@ -1220,7 +1748,8 @@ function App() {
                 setPanelOpen((prev) => !prev);
               }}
             >
-              {panelOpen ? 'Hide ▼' : 'Rooms ▲'}
+              <span className="mobile-toggle-text">{panelOpen ? 'Hide ▼' : 'Rooms ▲'}</span>
+              <span className="pc-toggle-text">{panelOpen ? '◀ Hide' : 'Show ▶'}</span>
             </button>
           </div>
         </div>
@@ -1252,6 +1781,11 @@ function App() {
           <div className="sheet-content">
             {activeTab === 'rooms' && (
               <div className="tab-pane">
+                <div className="active-floor-bar">
+                  <span className="active-floor-label">🏢 Active Map</span>
+                  <span className="active-floor-pill">3rd Floor Navigation</span>
+                </div>
+
                 {/* 1. CURRENT LOCATION SELECTOR (WHERE YOU ARE NOW) */}
                 <div className="section-block">
                   <div className="section-label">📍 You Are In (Current Room / Spot):</div>
@@ -1260,7 +1794,7 @@ function App() {
                       type="button"
                       className={`start-pill ${currentLocationNode === 'START' ? 'is-active' : ''}`}
                       onClick={() => {
-                        setCurrentLocationNode('START');
+                        moveUserToNode('START', 'manual');
                         setStatusMessage('You are at Main Entrance.');
                       }}
                     >
@@ -1274,7 +1808,7 @@ function App() {
                           type="button"
                           className={`start-pill ${isHere ? 'is-active' : ''}`}
                           onClick={() => {
-                            setCurrentLocationNode(room.targetNode);
+                            moveUserToNode(room.targetNode, 'manual');
                             setStatusMessage(`You are inside ${room.name}.`);
                           }}
                         >
@@ -1321,7 +1855,7 @@ function App() {
                   </div>
                 </div>
 
-                {selectedRoom && (
+                {activeDestination && (
                   <div className="active-route-card">
                     <div className="route-stat-grid">
                       <div className="route-stat">
@@ -1330,12 +1864,14 @@ function App() {
                       </div>
                       <div className="route-stat">
                         <span className="stat-label">To</span>
-                        <strong className="stat-val accent">{selectedRoom.name}</strong>
+                        <strong className="stat-val accent">{activeDestination.name}</strong>
                       </div>
                       <div className="route-stat">
-                        <span className="stat-label">Walk Time</span>
+                        <span className="stat-label">Remaining</span>
                         <strong className="stat-val green">
-                          {routeMetrics.seconds ? `~${routeMetrics.seconds}s` : 'Here'}
+                          {routeMetrics.seconds
+                            ? `~${routeMetrics.distanceMeters}m • ~${routeMetrics.seconds}s`
+                            : 'Arrived'}
                         </strong>
                       </div>
                     </div>
@@ -1355,8 +1891,10 @@ function App() {
               <div className="tab-pane">
                 <div className="ble-header-card">
                   <div className="ble-header-info">
-                    <div className="ble-status-title">Beacons (No. 300 – No. 305)</div>
-                    <div className="ble-status-sub">UUID: {BLE_SERVICE_UUID.slice(0, 8)}…</div>
+                    <div className="ble-status-title">BLE room beacons</div>
+                    <div className="ble-status-sub">
+                      Scan to monitor No. 301 and No. 304 together. Location follows the strongest stable signal.
+                    </div>
                   </div>
                   <div className="ble-btn-group">
                     <button
@@ -1371,7 +1909,7 @@ function App() {
                       className="btn-secondary-sm"
                       onClick={startAutoScanBeacons}
                     >
-                      {isScanningAll ? 'Stop Scan' : 'Auto-Scan'}
+                      {isScanningAll ? 'Stop Scan' : 'Scan Nearby'}
                     </button>
                   </div>
                 </div>
@@ -1380,7 +1918,7 @@ function App() {
                   {debugBeacons.length === 0 ? (
                     <div className="empty-ble-state">
                       <p>No active beacons detected yet.</p>
-                      <small>Tap &ldquo;Auto-Scan&rdquo; or &ldquo;+ Pair&rdquo; to connect.</small>
+                      <small>Scan nearby beacons together, or add No. 301 and No. 304 separately.</small>
                     </div>
                   ) : (
                     debugBeacons.map((beacon) => {
@@ -1399,7 +1937,13 @@ function App() {
                               </span>
                             </div>
                             <div className="debug-meta">
-                              {NODE_LABELS[beacon.targetNode]} • {ageSeconds}s ago
+                              {NODE_LABELS[beacon.targetNode]} •{' '}
+                              {typeof beacon.distanceMeters === 'number'
+                                ? `~${beacon.distanceMeters.toFixed(1)} m • `
+                                : ''}
+                              {beacon.isLive
+                                ? `${ageSeconds}s ago`
+                                : `Out of range • last seen ${ageSeconds}s ago`}
                             </div>
                           </div>
                           <div className={`debug-rssi ${strengthClass}`}>{rssiVal} dBm</div>
@@ -1411,8 +1955,35 @@ function App() {
               </div>
             )}
           </div>
+
+          <button
+            type="button"
+            className="sidebar-about-footer"
+            onClick={() => setGuideOpen(true)}
+          >
+            <span className="sidebar-about-icon" aria-hidden="true">
+              ℹ
+            </span>
+            <span className="sidebar-about-text">
+              <strong>About &amp; User Guide</strong>
+              <small>What this project is for &amp; how to use</small>
+            </span>
+            <span className="sidebar-about-pill">View ↗</span>
+          </button>
         </div>
       </aside>
+
+      <ProjectGuide
+        isOpen={guideOpen}
+        onClose={() => setGuideOpen(false)}
+        bleServiceUuid={BLE_SERVICE_UUID}
+        roomCount={rooms.length}
+        onOpenRooms={() => {
+          setGuideOpen(false);
+          setActiveTab('rooms');
+          setPanelOpen(true);
+        }}
+      />
     </div>
   );
 }
