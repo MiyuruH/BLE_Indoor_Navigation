@@ -48,3 +48,9 @@ npm run icons      # regenerate the app icons in public/icons/
 1. `npm run build && npm run preview`
 2. Open the URL in Chrome → DevTools → **Application** → check *Manifest* and *Service Workers*.
 3. In DevTools → **Network**, choose *Offline* and reload – the app still works.
+
+## Copyright & License
+
+Copyright © 2026 NavSense Project (Faculty of Technology, Rajarata University of Sri Lanka) & Contributors.
+
+Licensed under the Apache License, Version 2.0. See [LICENSE](../LICENSE) for the full terms and conditions.

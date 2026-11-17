@@ -198,4 +198,9 @@ BLE_Indoor_Navigation/
 - The main live map and room data are in [`App.jsx`](BLE_Navigation_With_Map/src/App.jsx).
 - Shared route and positioning calculations are in [`indoorNavigation.js`](BLE_Navigation_With_Map/src/utils/indoorNavigation.js).
 - The project currently defines no automated test script; `npm run build` is the available production-build check.
-- See [`LICENSE`](LICENSE) for license information.
+
+## ©️ Copyright & License
+
+Copyright © 2026 NavSense Project (Faculty of Technology, Rajarata University of Sri Lanka) & Contributors.
+
+Licensed under the Apache License, Version 2.0. See [`LICENSE`](LICENSE) for the full terms and conditions.
