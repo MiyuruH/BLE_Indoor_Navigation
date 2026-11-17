@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import './ProjectGuide.css';
 
 const DEMO_FLOORS = {
   '1F': {

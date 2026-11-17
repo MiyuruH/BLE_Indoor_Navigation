@@ -29,6 +29,10 @@
   box-sizing: border-box;
 }
 
+#root:has(.splash-screen) .pwa-install-popup {
+  display: none !important;
+}
+
 @media (max-width: 899px) {
   .pwa-top-stack {
     padding-top: calc(64px + env(safe-area-inset-top, 0px));
@@ -36,6 +40,26 @@
 
   .pwa-bottom-stack {
     padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* On the scrollable landing page, dock the install prompt at the bottom so it never covers the sticky nav header */
+  html:not(.is-map-view) .pwa-layer,
+  #root:has(.landing-page) .pwa-layer {
+    justify-content: flex-end;
+    gap: 8px;
+  }
+
+  html:not(.is-map-view) .pwa-top-stack,
+  #root:has(.landing-page) .pwa-top-stack {
+    order: 2;
+    padding-top: 0;
+    padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  }
+
+  html:not(.is-map-view) .pwa-bottom-stack,
+  #root:has(.landing-page) .pwa-bottom-stack {
+    order: 1;
+    padding-bottom: 0;
   }
 
   #root:has(.turn-banner) .pwa-install-popup,

@@ -1,30 +1,72 @@
-# BLE Indoor Navigation
+<div align="center">
+  <img src="BLE_Navigation_With_Map/public/icons/pwa-192x192.png" alt="Indoor Navigation app icon" width="104" />
+  <h1>Indoor Navigation</h1>
+  <p><strong>Find the room. Follow the route. Keep moving.</strong></p>
+  <p>A BLE-assisted indoor wayfinding prototype with an interactive floor map, live route guidance, and an installable offline-ready web app.</p>
+  <p>
+    <a href="#-get-started">Get started</a> ·
+    <a href="#-explore-the-map">Explore the map</a> ·
+    <a href="#-ble-beacons">Set up beacons</a> ·
+    <a href="#-build-and-deploy">Build &amp; deploy</a>
+  </p>
+</div>
 
-An indoor room-finding prototype that combines a browser-based floor map with Bluetooth Low Energy (BLE) beacons. Choose a destination, set or detect your starting location, and follow a route through the corridor. The web app is installable as a Progressive Web App (PWA) and can keep its map and navigation interface available offline after it has been loaded and cached.
+<p align="center">
+  <img alt="React" src="https://img.shields.io/badge/React-19-38bdf8?logo=react&logoColor=white" />
+  <img alt="Vite" src="https://img.shields.io/badge/Vite-7-8b5cf6?logo=vite&logoColor=white" />
+  <img alt="BLE" src="https://img.shields.io/badge/Bluetooth-LE-0284c7?logo=bluetooth&logoColor=white" />
+  <img alt="PWA" src="https://img.shields.io/badge/PWA-Offline--ready-34d399?logo=pwa&logoColor=white" />
+</p>
 
-> **Project status:** The current map models one floor with six rooms (No. 300–305). BLE-based positioning is an estimate based on signal strength; it is not a precision positioning system.
+> **Prototype scope** · The live app currently maps one floor and six rooms (**No. 300–305**). BLE positioning estimates location from radio signal strength; it is not precision positioning.
 
-## What’s in the repository
+## ✨ At a glance
 
-| Path | Purpose |
-| --- | --- |
-| [`BLE_Navigation_With_Map/`](BLE_Navigation_With_Map/) | React + Vite web app, interactive map, routing, BLE scanning, and PWA setup |
-| [`BLE_Becon/`](BLE_Becon/) | Arduino sketches for two BLE beacon examples |
-| [`indoor_nav_start_change.html`](indoor_nav_start_change.html) | Standalone HTML project artifact |
+| 🗺️ Interactive map | 📡 BLE + manual location | 🧭 Live wayfinding | 📲 Installable PWA |
+| --- | --- | --- | --- |
+| Select a room or tap a point on the floor plan. | Start with a beacon or set your position yourself. | Get a route, turn cues, and distance/time estimates. | Cache the app shell and use it offline after the first load. |
 
-The application map and room data are currently defined in `BLE_Navigation_With_Map/src/App.jsx`. The reusable route and positioning calculations are in `BLE_Navigation_With_Map/src/utils/indoorNavigation.js`.
+### The navigation loop
 
-## Get started
+```mermaid
+flowchart LR
+    A["📍 Set your location<br/>BLE beacon or manual"] --> B["🚩 Choose a room"]
+    B --> C["🧮 Find a walkable route"]
+    C --> D["🧭 Follow live guidance"]
+    D --> E["✅ Arrive"]
+```
+
+## 🗺️ Explore the map
+
+The current floor connects the entrance to a central corridor, two junctions, and six room doorways. The diagram shows the navigation graph—not a scale drawing.
+
+```mermaid
+flowchart LR
+    Entrance["Entrance"] --- Hall300["Hall near 300"]
+    Hall300 --- Main["Main junction"]
+    Hall300 --- Room300["Room 300"]
+    Main --- Hall305["Hall near 305"]
+    Hall305 --- Room305["Room 305"]
+    Main --- Left["Left junction"]
+    Left --- Right["Right junction"]
+    Left --- Room301["Room 301"]
+    Left --- Room303["Room 303"]
+    Right --- Room302["Room 302"]
+    Right --- Room304["Room 304"]
+```
+
+Routes use a connected graph of corridor junctions and doorways. The app can update the route from the selected or estimated position and show turn and destination-side guidance. Current mapped destinations: **300 · 301 · 302 · 303 · 304 · 305**.
+
+## 🚀 Get started
 
 ### Requirements
 
-- Node.js **20.19+** or **22.12+**, and npm
-- A modern browser; use Chrome or Edge for Web Bluetooth
-- For live BLE scanning: a device with Bluetooth, plus HTTPS or `localhost`
+- **Node.js:** 20.19+ or 22.12+
+- **npm**
+- A modern browser; **Chrome or Edge** is needed for Web Bluetooth
+- For BLE: a Bluetooth-capable device and a secure context (**HTTPS** or `localhost`)
 
-### Run the web app
-
-From the repository root:
+### Run locally
 
 ```bash
 cd BLE_Navigation_With_Map
@@ -32,78 +74,128 @@ npm install
 npm run dev
 ```
 
-Open the local URL printed by Vite. You can explore the map and routes without any beacons.
+Open the local address printed by Vite. You can try the map and routing without any beacon hardware.
 
-### Available commands
+### Handy commands
 
-Run these from `BLE_Navigation_With_Map/`:
+Run commands from `BLE_Navigation_With_Map/`.
 
-| Command | What it does |
+| Command | Result |
 | --- | --- |
-| `npm run dev` | Start the local development server |
-| `npm run build` | Create the production PWA build in `dist/` |
-| `npm run preview` | Preview the production build locally |
-| `npm run icons` | Regenerate the app icons in `public/icons/` |
+| `npm run dev` | Start the development server |
+| `npm run build` | Create the production app and service worker in `dist/` |
+| `npm run preview` | Preview the production build |
+| `npm run icons` | Regenerate PWA icons |
 
-## Use the navigation app
+## 📡 BLE beacons
 
-1. Choose a room on the map or from the Rooms list to set your destination.
-2. Set your current position manually using the location controls, or open the beacon controls and connect to a beacon.
-3. Follow the route and turn guidance shown by the app. You can use manual positioning without BLE hardware.
-4. On a supported phone, enable compass tracking if you want the on-screen direction indicator to follow your device heading.
+Two Arduino sketches demonstrate room beacons:
 
-The route is calculated over a graph of corridor junctions and room doorways. The app updates the route from the selected or estimated position and provides distance and walking-time guidance.
+| Sketch | Advertised name | Example destination |
+| --- | --- | --- |
+| [`beacon_1.ino`](BLE_Becon/beacon_1/beacon_1.ino) | `No. 300` | Room 300 |
+| [`beacon_2.ino`](BLE_Becon/beacon_2/beacon_2.ino) | `No. 305` | Room 305 |
 
-## Set up the example BLE beacons
-
-The sketches in `BLE_Becon/beacon_1/` and `BLE_Becon/beacon_2/` are ESP32-style Arduino BLE advertiser examples. They currently broadcast the names **No. 300** and **No. 305**, respectively, and use this service UUID:
+Both use the same BLE service UUID:
 
 ```text
 12345678-1234-1234-1234-1234567890ab
 ```
 
-To try them:
+### Bring up a beacon
 
-1. Open a sketch in the Arduino IDE with an ESP32 board package that provides `BLEDevice.h` and `BLEServer.h`.
-2. Select your board and port, then upload the sketch to a compatible board.
-3. Power on the board and grant the browser permission when selecting or scanning for the beacon.
+1. Open a sketch in Arduino IDE with an ESP32 board package that provides `BLEDevice.h` and `BLEServer.h`.
+2. Select the compatible board and port, then upload the sketch.
+3. Power on the board and grant Bluetooth permission in Chrome or Edge when prompted by the app.
+4. Choose the room as your destination and use the beacon controls to connect or scan.
 
-To represent another room, change the beacon name in the sketch to match the room and keep its service UUID consistent with the app. The app recognizes room names for No. 300–305 (and the configured aliases `a01` and `b01`). Add or reposition physical beacons for your building as needed.
+To represent another room, change the advertised name to a mapped room name (**No. 300–305**) and keep the service UUID aligned with the app. Aliases `a01` and `b01` are also configured. Beacon placement and signal calibration are building-specific.
 
-### BLE and positioning limitations
+<details>
+  <summary><strong>BLE compatibility &amp; accuracy notes</strong></summary>
 
-- Web Bluetooth is supported in Chromium-based browsers such as Chrome and Edge, but is not available in iOS Safari.
-- Bluetooth access requires a secure context: HTTPS on a deployed site, or `localhost` during development.
-- Signal strength (RSSI) varies with walls, people, device orientation, and beacon placement. Treat the displayed live position and distance as estimates; validate and calibrate them in the target building.
-- The included beacon sketches advertise a room identity and service UUID. They do not provide surveyed coordinates or guarantee room-level accuracy.
+  - Web Bluetooth works in supported Chromium-based browsers such as Chrome and Edge; **iOS Safari does not support Web Bluetooth**.
+  - Bluetooth access requires HTTPS, except on `localhost`.
+  - RSSI changes with walls, people, device orientation, and beacon placement. Treat the displayed location and distance as estimates.
+  - The example beacons broadcast a room identity and service UUID; they do not contain surveyed coordinates or guarantee room-level accuracy.
+  - Manual starting-location selection remains available for demos and testing without BLE hardware.
+</details>
 
-## Offline use and deployment
+## ⚙️ How the pieces fit together
 
-The Vite PWA configuration uses Workbox to generate a service worker and precache the production app assets. Build and preview it locally:
+```mermaid
+flowchart TB
+    subgraph Device["Your device"]
+        UI["React map & controls"]
+        LOC["Starting position"]
+        BLE["BLE advertisements"]
+        MANUAL["Manual selection"]
+        EST["RSSI smoothing & position estimate"]
+        GRAPH["Walkable corridor graph"]
+        ROUTE["Route & turn guidance"]
+        CACHE["PWA service worker cache"]
+        UI --> LOC
+        BLE --> EST
+        MANUAL --> GRAPH
+        LOC --> GRAPH
+        EST --> GRAPH
+        GRAPH --> ROUTE
+        ROUTE --> UI
+        CACHE -. "serves app shell offline" .-> UI
+    end
+    BEACONS["ESP32 example beacons"] -. "Bluetooth LE" .-> BLE
+```
+
+The map, routing, and navigation logic run in the browser; this project does not require a separate navigation backend.
+
+## 📲 Build and deploy
+
+Build and test the production PWA locally:
 
 ```bash
+cd BLE_Navigation_With_Map
 npm run build
 npm run preview
 ```
 
-Open the preview in a browser, allow it to finish loading once, and then test by switching the browser to offline mode and reloading. The core map and routing are client-side, so they do not need a navigation server.
+Open the preview once so the app assets can be cached, then test reload with the browser set to offline. To deploy, publish the contents of `BLE_Navigation_With_Map/dist/` to a static **HTTPS** host.
 
-To deploy, publish the contents of `BLE_Navigation_With_Map/dist/` to a static host with HTTPS. HTTPS is required for PWA installation and BLE access. The current configuration expects the app at the domain root (`/`). For hosting under a subpath, update the Vite `base` setting and the PWA manifest URLs in `BLE_Navigation_With_Map/vite.config.js`.
+> **Hosting under a subpath?** The current Vite and PWA configuration expects the domain root (`/`). Update the Vite `base` setting and PWA manifest URLs in [`vite.config.js`](BLE_Navigation_With_Map/vite.config.js) for a subpath deployment.
 
-## How it works
+## 🧩 Project layout
 
-1. **Map and destinations:** the app renders the mapped floor and room destinations.
-2. **Starting position:** choose a position manually or use authorized BLE beacons.
-3. **BLE estimate:** received signal strengths are smoothed and converted to approximate distances to estimate a location on walkable paths.
-4. **Route and guidance:** shortest-path routing follows the corridor graph to the selected room.
-5. **PWA cache:** the service worker caches production assets so the app shell remains available offline after the first successful load.
+```text
+BLE_Indoor_Navigation/
+├── BLE_Becon/                       # Arduino BLE advertiser sketches
+│   ├── beacon_1/beacon_1.ino         # Example: No. 300
+│   └── beacon_2/beacon_2.ino         # Example: No. 305
+├── BLE_Navigation_With_Map/          # React + Vite PWA
+│   ├── public/icons/                 # App and install icons
+│   ├── src/
+│   │   ├── components/ProjectGuide.jsx
+│   │   ├── pwa/                      # Install and update controls
+│   │   ├── utils/indoorNavigation.js # Position and route calculations
+│   │   └── App.jsx                   # Map, room data, and app behavior
+│   └── vite.config.js                # Vite and service-worker configuration
+├── indoor_nav_start_change.html      # Standalone HTML project artifact
+├── .gitignore
+└── README.md
+```
 
-## Development notes
+## 🛠️ Stack
 
-- The app has no separate backend service; the current map, routes, and navigation logic run in the browser.
-- No automated test script is defined in `package.json`. `npm run build` is the available production-build check.
-- Generated dependencies, build output, and local environment files are excluded by the repository `.gitignore`.
+| Area | Technology |
+| --- | --- |
+| User interface | React 19 |
+| Development and build | Vite 7 |
+| Location input | Web Bluetooth LE or manual selection |
+| Routing | In-browser walkable-graph pathfinding |
+| Offline support | PWA service worker and Workbox |
+| Beacon examples | Arduino sketches using ESP32 BLE APIs |
 
-## License
+## 📌 Project notes
 
-See [`LICENSE`](LICENSE).
+- The main live map and room data are in [`App.jsx`](BLE_Navigation_With_Map/src/App.jsx).
+- Shared route and positioning calculations are in [`indoorNavigation.js`](BLE_Navigation_With_Map/src/utils/indoorNavigation.js).
+- The project currently defines no automated test script; `npm run build` is the available production-build check.
+- See [`LICENSE`](LICENSE) for license information.

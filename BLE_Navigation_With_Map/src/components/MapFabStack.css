@@ -1,0 +1,121 @@
+/* =========================================================
+   MAP FLOATING ZOOM BUTTONS
+   ========================================================= */
+.map-fab-stack {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 15;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.fab-btn {
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-glass);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  color: var(--text-main);
+  font-size: 1.05rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+
+.fab-btn:active {
+  transform: scale(0.92);
+}
+
+.fab-btn.is-active {
+  border-color: var(--accent);
+  background: rgba(14, 116, 144, 0.45);
+}
+
+.compass-needle {
+  display: inline-block;
+  transition: transform 0.22s ease;
+}
+
+.map-floor-tile {
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  border: 1px solid rgba(56, 189, 248, 0.5);
+  background: rgba(14, 116, 144, 0.36);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+
+.map-floor-kicker {
+  font-size: 0.48rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+}
+
+.map-floor-num {
+  font-size: 0.92rem;
+  font-weight: 800;
+  color: var(--text-main);
+}
+
+@media (max-width: 899px) {
+  .map-fab-stack {
+    top: auto;
+    bottom: calc(62px + var(--safe-bottom));
+    transform: none;
+    transition: opacity 0.18s ease, transform 0.18s ease, visibility 0.18s ease;
+  }
+
+  .nav-app:not(.sidebar-is-hidden) .map-fab-stack {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transform: translateY(10px);
+  }
+}
+
+@media (max-width: 899px) and (max-height: 700px) {
+  .map-fab-stack {
+    display: grid;
+    grid-template-columns: repeat(2, 36px);
+    gap: 6px;
+    bottom: calc(58px + var(--safe-bottom));
+  }
+
+  .map-fab-stack .fab-btn,
+  .map-fab-stack .map-floor-tile {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+  }
+}
+
+@media (max-width: 899px) and (max-height: 520px) {
+  .map-fab-stack {
+    grid-template-columns: repeat(2, 34px);
+    gap: 5px;
+    bottom: calc(56px + var(--safe-bottom));
+  }
+
+  .map-fab-stack .fab-btn,
+  .map-fab-stack .map-floor-tile {
+    width: 34px;
+    height: 34px;
+    font-size: 0.95rem;
+  }
+}

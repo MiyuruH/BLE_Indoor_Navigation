@@ -1,0 +1,252 @@
+/* =========================================================
+   MAP VIEWPORT (MAX SCREEN USAGE ON MOBILE)
+   ========================================================= */
+.map-viewport {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: none;
+  cursor: grab;
+  z-index: 1;
+  padding: calc(64px + var(--safe-top)) 10px calc(62px + var(--safe-bottom)) 10px;
+  transition: padding-bottom 0.25s ease;
+}
+
+.map-viewport:active {
+  cursor: grabbing;
+}
+
+.map-stage {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  will-change: transform;
+  transform-origin: center center;
+  transition: transform 0.36s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.map-stage.is-dragging {
+  transition: none;
+}
+
+.floorplan-svg {
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  display: block;
+  filter: drop-shadow(0 14px 34px rgba(0, 0, 0, 0.55));
+}
+
+/* =========================================================
+   SVG FLOOR PLAN STYLING
+   ========================================================= */
+.fp-shell {
+  fill: #f8fafc;
+  stroke: #0f172a;
+  stroke-width: 8;
+  stroke-linejoin: round;
+}
+
+.fp-corridor {
+  fill: #f1f5f9;
+  stroke: #64748b;
+  stroke-width: 2;
+  stroke-dasharray: 10 8;
+  cursor: pointer;
+}
+
+.fp-nav-node {
+  fill: rgba(100, 116, 139, 0.25);
+  pointer-events: none;
+}
+
+.fp-entrance-pill {
+  fill: #0f172a;
+  stroke: #38bdf8;
+  stroke-width: 2.5;
+}
+
+.fp-entrance-text {
+  fill: #38bdf8;
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  pointer-events: none;
+}
+
+.fp-room-group {
+  cursor: pointer;
+}
+
+.fp-room-poly {
+  fill: #cbd5e1;
+  stroke: #0f172a;
+  stroke-width: 6;
+  transition: fill 0.18s ease;
+}
+
+.fp-room-group:hover .fp-room-poly {
+  fill: #93c5fd;
+}
+
+.fp-room-group.is-current .fp-room-poly {
+  fill: #bae6fd;
+}
+
+.fp-room-group.is-selected .fp-room-poly {
+  fill: #6ee7b7;
+}
+
+.fp-door-dot {
+  fill: #475569;
+  stroke: #f8fafc;
+  stroke-width: 3;
+  pointer-events: none;
+}
+
+.fp-room-group.is-selected .fp-door-dot {
+  fill: #059669;
+}
+
+.fp-room-title {
+  fill: #0f172a;
+  font-size: 36px;
+  font-weight: 800;
+  paint-order: stroke;
+  stroke: rgba(255, 255, 255, 0.8);
+  stroke-width: 4;
+  pointer-events: none;
+}
+
+.fp-room-here-tag {
+  fill: #0284c7;
+  font-size: 21px;
+  font-weight: 800;
+  paint-order: stroke;
+  stroke: rgba(255, 255, 255, 0.92);
+  stroke-width: 3.5;
+  pointer-events: none;
+}
+
+.fp-room-beacon-tag {
+  fill: #065f46;
+  font-size: 20px;
+  font-weight: 800;
+  paint-order: stroke;
+  stroke: rgba(255, 255, 255, 0.85);
+  stroke-width: 3;
+  pointer-events: none;
+}
+
+.fp-wall-stub {
+  stroke: #0f172a;
+  stroke-width: 6;
+  stroke-linecap: round;
+}
+
+.fp-route-casing {
+  fill: none;
+  stroke: #ffffff;
+  stroke-width: 18;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.9;
+  pointer-events: none;
+}
+
+.fp-route-line {
+  fill: none;
+  stroke: #2563eb;
+  stroke-width: 12;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.fp-route-flow {
+  fill: none;
+  stroke: #38bdf8;
+  stroke-width: 6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 18 22;
+  animation: routeFlow 1s linear infinite;
+  pointer-events: none;
+}
+
+@keyframes routeFlow {
+  to {
+    stroke-dashoffset: -40;
+  }
+}
+
+.fp-user-group {
+  pointer-events: none;
+  transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.fp-user-pulse {
+  fill: rgba(56, 189, 248, 0.32);
+  animation: userPulse 1.8s ease-out infinite;
+}
+
+.fp-user-accuracy {
+  fill: rgba(56, 189, 248, 0.14);
+  stroke: rgba(56, 189, 248, 0.36);
+  stroke-width: 2;
+  pointer-events: none;
+}
+
+.fp-user-dot {
+  fill: #0284c7;
+  stroke: #ffffff;
+  stroke-width: 5;
+}
+
+.fp-user-core {
+  fill: #38bdf8;
+}
+
+.fp-dest-group {
+  pointer-events: none;
+}
+
+.fp-dest-ripple {
+  fill: rgba(244, 63, 94, 0.28);
+  animation: userPulse 1.6s ease-out infinite;
+}
+
+.fp-dest-pin {
+  fill: #e11d48;
+  stroke: #ffffff;
+  stroke-width: 4;
+}
+
+@keyframes userPulse {
+  0% {
+    transform: scale(0.65);
+    opacity: 0.85;
+  }
+  100% {
+    transform: scale(1.8);
+    opacity: 0;
+  }
+}
+
+@media (min-width: 900px) {
+  .map-viewport {
+    padding: 20px 70px 20px 360px;
+    transition: padding 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .map-viewport.panel-is-hidden {
+    padding-left: 52px;
+  }
+}
