@@ -17,7 +17,6 @@
   --ns-gold-soft: rgba(212, 166, 86, 0.12);
   --ns-focus: #60a5fa;
   --ns-header-h: 64px;
-  --ns-footer-h: 152px;
   --ns-font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --ns-font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 
@@ -211,14 +210,6 @@
   flex-direction: column;
   justify-content: center;
   scroll-margin-top: var(--ns-header-h);
-}
-
-@media (min-width: 900px) and (min-height: 680px) {
-  /* Keep the final Team grid + Footer together on the 5th screen */
-  .landing-team-screen {
-    min-height: calc(100vh - var(--ns-header-h) - var(--ns-footer-h));
-    min-height: calc(100svh - var(--ns-header-h) - var(--ns-footer-h));
-  }
 }
 
 .landing-screen-body {
@@ -795,73 +786,6 @@
   color: var(--ns-text);
 }
 
-/* Team Section (6 members) */
-.landing-team-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 16px;
-}
-
-.landing-team-card {
-  background: var(--ns-surface);
-  border: 1px solid var(--ns-border);
-  border-radius: 12px;
-  padding: 18px 20px;
-  transition: border-color 0.16s ease;
-}
-
-.landing-team-card:hover {
-  border-color: var(--ns-border-strong);
-}
-
-.landing-team-card-head {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 10px;
-}
-
-.landing-team-index {
-  width: 36px;
-  height: 36px;
-  border-radius: 8px;
-  background: rgba(11, 18, 32, 0.75);
-  border: 1px solid var(--ns-border-strong);
-  font-family: var(--ns-font-mono);
-  font-size: 0.82rem;
-  font-weight: 600;
-  color: var(--ns-gold);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.landing-team-identity {
-  min-width: 0;
-}
-
-.landing-team-name {
-  margin: 0 0 2px;
-  font-size: 0.96rem;
-  font-weight: 700;
-  color: var(--ns-text);
-}
-
-.landing-team-role {
-  margin: 0;
-  font-size: 0.8rem;
-  font-weight: 500;
-  color: #60a5fa;
-}
-
-.landing-team-detail {
-  margin: 0;
-  font-size: 0.85rem;
-  line-height: 1.5;
-  color: var(--ns-text-secondary);
-}
-
 /* Footer */
 .landing-footer {
   padding: 20px 0 24px;
@@ -951,10 +875,6 @@
   .landing-about-grid {
     grid-template-columns: 1fr;
     gap: 24px;
-  }
-
-  .landing-team-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .landing-directory-grid {
@@ -1047,8 +967,7 @@
   }
 
   .landing-features-grid,
-  .landing-steps-grid,
-  .landing-team-grid {
+  .landing-steps-grid {
     grid-template-columns: 1fr;
   }
 
@@ -1077,7 +996,6 @@
   .landing-directory-panel,
   .landing-feature-card,
   .landing-step-card,
-  .landing-team-card,
   .landing-campus-plaque {
     padding: 18px 16px;
   }

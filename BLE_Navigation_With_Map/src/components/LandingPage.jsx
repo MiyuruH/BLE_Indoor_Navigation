@@ -6,7 +6,6 @@ const NAV_LINKS = [
   { id: 'features', label: 'Features', href: '#features' },
   { id: 'how-it-works', label: 'How It Works', href: '#how-it-works' },
   { id: 'about', label: 'About', href: '#about' },
-  { id: 'team', label: 'Team', href: '#team' },
 ];
 
 const FEATURE_CARDS = [
@@ -113,45 +112,6 @@ const SYSTEM_PILLARS = [
     title: 'Offline PWA Support',
     detail:
       'Floor-plan assets, routing tables, and beacon metadata cache locally so navigation works even without cellular data.',
-  },
-];
-
-const TEAM_MEMBERS = [
-  {
-    id: '01',
-    name: 'Team Member 01',
-    role: 'Project Lead & Architecture',
-    detail: 'System architecture, milestone coordination, and end-to-end validation across hardware and web modules.',
-  },
-  {
-    id: '02',
-    name: 'Team Member 02',
-    role: 'BLE Hardware & Firmware',
-    detail: 'ESP32 / BLE beacon calibration, TX power profiling, and room-by-room RSSI signal fingerprinting.',
-  },
-  {
-    id: '03',
-    name: 'Team Member 03',
-    role: 'Localization Engine',
-    detail: '1D Kalman smoothing, log-distance path-loss modeling, and proximity-weighted trilateration logic.',
-  },
-  {
-    id: '04',
-    name: 'Team Member 04',
-    role: 'Routing & Motion Sensors',
-    detail: 'Dijkstra walkable graph modeling, gyroscope compass heading fusion, and junction turn alerts.',
-  },
-  {
-    id: '05',
-    name: 'Team Member 05',
-    role: 'Frontend UI & Cartography',
-    detail: '2D floor plan layout, interactive canvas controls, landing experience, and mobile responsiveness.',
-  },
-  {
-    id: '06',
-    name: 'Team Member 06',
-    role: 'PWA Offline & QA Testing',
-    detail: 'Service Worker asset caching, cross-device Playwright regression testing, and technical documentation.',
   },
 ];
 
@@ -521,47 +481,6 @@ export default function LandingPage({ onStartNavigation }) {
             </div>
           </div>
 
-          <a
-            href="#team"
-            className="landing-scroll-cue"
-            aria-label="Scroll to Project Team section"
-            onClick={(e) => scrollToSection(e, 'team')}
-          >
-            <span>Next: Project Team</span>
-            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M10 4v11" />
-              <path d="M6 11l4 4 4-4" />
-            </svg>
-          </a>
-        </section>
-
-        {/* Screen 5: Team */}
-        <section id="team" className="landing-section landing-section-alt landing-team-screen landing-snap-screen">
-          <div className="landing-container landing-screen-body">
-            <div className="landing-section-header">
-              <p className="landing-section-kicker">04 · PROJECT TEAM</p>
-              <h2 className="landing-section-title">Six contributors behind NavSense</h2>
-              <p className="landing-section-lead">
-                Faculty of Technology engineering cohort collaborating across embedded BLE, routing math,
-                UI cartography, and validation.
-              </p>
-            </div>
-
-            <div className="landing-team-grid">
-              {TEAM_MEMBERS.map((member) => (
-                <article key={member.id} className="landing-team-card">
-                  <div className="landing-team-card-head">
-                    <span className="landing-team-index">{member.id}</span>
-                    <div className="landing-team-identity">
-                      <h3 className="landing-team-name">{member.name}</h3>
-                      <p className="landing-team-role">{member.role}</p>
-                    </div>
-                  </div>
-                  <p className="landing-team-detail">{member.detail}</p>
-                </article>
-              ))}
-            </div>
-          </div>
         </section>
       </main>
 
